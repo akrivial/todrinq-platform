@@ -1,0 +1,16 @@
+POST /predict/carbon_activation
+For the activated carbon: 
+    We will accept the input features like the following: 
+    {
+  "flowrate": 140,
+  "influent_toc": 5.2,
+  "effluent_toc": 1.1,
+  "bed_age": 130,
+  "biological_activity": 0.42,
+  "clogging_index": 78
+}
+And it will return: 
+{
+  "needs_regeneration": true
+}
+
