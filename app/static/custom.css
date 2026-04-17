@@ -1,0 +1,78 @@
+layout
+body { margin:0; background:#0b1220; color:#e9eef7; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+#brand { position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:12px; padding:16px 24px; background:#0b1220cc; backdrop-filter: blur(6px); border-bottom:1px solid #1e2a44; }
+#brand img { height:28px; }
+#brand h1 { margin:0; font-weight:700; font-size:18px; letter-spacing:.2px; }
+#brand .tag { margin-left:auto; font-size:12px; padding:4px 8px; border-radius:999px; background:#14233e; color:#8fb3ff; border:1px solid #22365e; }
+
+/* swagger cleanups */
+.topbar { display:none !important; }
+.swagger-ui { max-width:1100px; margin:24px auto; }
+.swagger-ui .info { margin:16px 0 24px; }
+.swagger-ui .opblock { border-radius:14px; border:none; box-shadow: 0 6px 18px rgba(0,0,0,.25); overflow:hidden; }
+.swagger-ui .opblock-tag { font-size:20px; padding:16px 0; color:#e9eef7; }
+.swagger-ui .opblock-summary-method { border-radius:8px; }
+.swagger-ui .btn { border-radius:10px; }
+.swagger-ui .model-box, .swagger-ui .model { color:#cfd8ea; }
+.swagger-ui .response-col_status { font-weight:600; }
+
+/* colors */
+.opblock-post { background:linear-gradient(180deg,#132d2b 0,#0f2627 100%); }
+.opblock-get  { background:linear-gradient(180deg,#19263d 0,#121d33 100%); }
+.opblock-put  { background:linear-gradient(180deg,#3a2a16 0,#2f2010 100%); }
+.opblock-delete { background:linear-gradient(180deg,#3d1d25 0,#2c151b 100%); }
+
+
+/* Base */
+:root{
+  --bg:#0b1220;
+  --panel:#0f1a2e;
+  --line:#1e2a44;
+  --text:#e9eef7;
+  --muted:#9fb3d9;
+  --brand1:#1ecad8;   /* ToDrinQ teal */
+  --brand2:#132a42;   /* deep navy */
+  --pill:#14233e;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+
+/* Brand header */
+#brand{
+  position:sticky;top:0;z-index:10;
+  display:flex;align-items:center;gap:14px;
+  padding:16px 24px;
+  background:linear-gradient(180deg,rgba(19,42,66,.9),rgba(11,18,32,.9));
+  border-bottom:1px solid var(--line);
+  backdrop-filter:saturate(1.2) blur(6px);
+}
+#brand img{height:28px;aspect-ratio:auto;display:block}
+#brand h1{margin:0;font-weight:700;font-size:18px;letter-spacing:.2px}
+#brand .tag{
+  margin-left:auto;font-size:12px;padding:6px 10px;border-radius:999px;
+  background:var(--pill);color:#8fb3ff;border:1px solid #22365e
+}
+
+/* Swagger layout polish */
+.topbar{display:none !important;}
+.swagger-ui{max-width:1100px;margin:24px auto}
+.swagger-ui .info{margin:12px 0 20px}
+.swagger-ui .opblock{border:none;border-radius:14px;overflow:hidden;
+  box-shadow:0 10px 26px rgba(0,0,0,.25)}
+.swagger-ui .opblock-tag{font-size:22px;color:var(--text)}
+.swagger-ui .model,.swagger-ui .model-box{color:#cfd8ea}
+.swagger-ui .btn{border-radius:10px}
+
+/* Operation blocks – subtle gradients */
+.opblock-post{background:linear-gradient(180deg,#133a3a,#0f2c2f)}
+.opblock-get{background:linear-gradient(180deg,#1a2c4c,#12213b)}
+.opblock-put{background:linear-gradient(180deg,#3a2a16,#2b1f11)}
+.opblock-delete{background:linear-gradient(180deg,#3d1d25,#2a141b)}
+
+/* Links, badges */
+a{color:var(--brand1)}
+.swagger-ui .version,.swagger-ui .info .base-url{background:var(--pill);border-radius:999px;padding:2px 8px}
+
+/* Tables & lines */
+.swagger-ui .opblock .opblock-section-header{border-color:var(--line)}
+.swagger-ui .response-col_status{font-weight:600}
