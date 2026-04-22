@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional, Any
 import logging
+import traceback
 import joblib
 
 log = logging.getLogger(__name__)
@@ -38,13 +39,18 @@ coliform_target_scaler: Optional[Any] = None
 def _load_joblib(path: Path, label: str) -> Optional[Any]:
     if not path.exists():
         log.warning("[models] Missing %s: %s", label, path)
+        print(f">>> MISSING {label}: {path}")
         return None
 
     try:
         obj = joblib.load(path)
         log.info("[models] Loaded %s successfully from %s", label, path)
+        print(f">>> LOADED {label}: {path}")
         return obj
     except Exception as e:
+        print(f">>> FAILED TO LOAD {label}: {path}")
+        print(repr(e))
+        traceback.print_exc()
         log.exception("[models] Failed to load %s: %s", label, e)
         return None
 
@@ -106,13 +112,21 @@ COAG_DIR = MODELS_DIR / "coagulation"
 
 def _load_coag() -> Optional[Any]:
     path = COAG_DIR / "optimal_model_neural_network.keras"
+
+    print(f">>> COAG MODEL PATH: {path}")
+    print(f">>> COAG MODEL EXISTS: {path.exists()}")
+
     if not path.exists():
         log.warning("[models] Missing coagulation model: %s", path)
+        print(f">>> MISSING coagulation model: {path}")
         return None
 
     try:
         from tensorflow import keras
         from model.physics_layer import ModifiedBatchNormalization
+
+        print(">>> Imported TensorFlow keras successfully")
+        print(">>> Imported ModifiedBatchNormalization successfully")
 
         model = keras.models.load_model(
             path,
@@ -123,9 +137,13 @@ def _load_coag() -> Optional[Any]:
         )
 
         log.info("[models] Coagulation model loaded successfully from %s", path)
+        print(f">>> COAG MODEL LOADED OK: {path}")
         return model
 
     except Exception as e:
+        print("\n>>> COAG LOAD ERROR >>>")
+        print(repr(e))
+        traceback.print_exc()
         log.exception("[models] Failed to load coagulation model: %s", e)
         return None
 

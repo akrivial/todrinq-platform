@@ -8,6 +8,7 @@ __pycache__/
 # Data / training / non-core local folders
 data/
 training/
+model/
 visualizations/
 
 # Docs / misc

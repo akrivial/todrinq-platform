@@ -1,7 +1,5 @@
-from typing import Any, Dict, List, Optional
-
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.routes.predict import CoagulationInput, run_coagulation_prediction
 from app.services.ozonation_predictions import (
@@ -13,13 +11,20 @@ from app.services.ozonation_predictions import (
 router = APIRouter(tags=["Risk Module"])
 
 
-# =========================================================
+# --------------------------------------------------
 # INPUT MODELS
-# =========================================================
+# --------------------------------------------------
 class SourceRiskInput(BaseModel):
-    predicted_turbidity: float = Field(..., description="Predicted raw water turbidity at DWTP inlet")
-    threshold: float = Field(5.0, description="Operational turbidity threshold")
-    yopi_sensitive: bool = Field(True, description="Whether to emphasize vulnerable consumer groups")
+    predicted_turbidity: float
+    threshold: float
+    yopi_sensitive: bool = False
+
+
+class RLRiskInput(BaseModel):
+    current_fecl3_dose: float
+    recommended_fecl3_dose: float
+    output_turbidity: float
+    confidence: float
 
 
 class CTInput(BaseModel):
@@ -55,33 +60,26 @@ class ColiformInput(BaseModel):
     CT_All: float
 
 
-class RLDosageRiskInput(BaseModel):
-    current_fecl3_dose: float = Field(..., description="Current FeCl3 dose")
-    recommended_fecl3_dose: float = Field(..., description="Recommended FeCl3 dose from RL model")
-    output_turbidity: Optional[float] = Field(None, description="Observed or predicted output turbidity")
-    confidence: float = Field(0.75, description="Confidence/proxy of RL recommendation in [0,1]")
-
-
-class DistributionRiskInput(BaseModel):
-    aeromonas_probability: float = Field(..., description="Predicted probability proxy of Aeromonas occurrence [0,1]")
-    residual_disinfectant_low: bool = False
-    warm_water_condition: bool = False
-    stagnation_risk: bool = False
-    yopi_sensitive: bool = True
-
-
 class OzonationRiskInput(BaseModel):
     ct: CTInput
     bromate: BromateInput
     coliform: ColiformInput
-    yopi_sensitive: bool = True
+    yopi_sensitive: bool = False
+
+
+class DistributionRiskInput(BaseModel):
+    aeromonas_probability: float
+    residual_disinfectant_low: bool = False
+    warm_water_condition: bool = False
+    stagnation_risk: bool = False
+    yopi_sensitive: bool = False
 
 
 class TreatmentRiskInput(BaseModel):
     coagulation: CoagulationInput
+    rl: RLRiskInput
     ozonation: OzonationRiskInput
-    rl: Optional[RLDosageRiskInput] = None
-    yopi_sensitive: bool = True
+    yopi_sensitive: bool = False
 
 
 class SystemRiskInput(BaseModel):
@@ -90,40 +88,52 @@ class SystemRiskInput(BaseModel):
     distribution: DistributionRiskInput
 
 
-# =========================================================
-# CONSTANT NAMES
-# =========================================================
+# --------------------------------------------------
+# CONSTANTS
+# --------------------------------------------------
 MODULE_RISK = "Risk"
 MODULE_SOURCE = "Source / Intake"
 MODULE_TREATMENT = "Treatment"
 MODULE_DISTRIBUTION = "Distribution"
-MODULE_SYSTEM = "Source-to-tap"
 
 SOSE_9_NAME = "SoSe #9 - Early prediction of turbidity in DWTP inlet"
 SOSE_8_NAME = "SoSe #8 - Estimation of turbidity of the coagulation-flocculation process"
-RL_4_NAME = "RL #4 - RL Optimal FeCl3 dosage for coagulation process"
+RL_5_NAME = "RL #5 - RL Optimal FeCl3 dosage for coagulation process"
 SOSE_10_NAME = "SoSe #10 - Prediction of the ozonation exposure, CT, to improve the ozonation process"
 SOSE_101_NAME = "SoSe #10.1 - Bromate formation model"
 SOSE_102_NAME = "SoSe #10.2 - Coliform removal model"
 SOSE_11_NAME = "SoSe #11 - Aeromonas prediction model"
 BACTOSENSE_4_NAME = "BactoSense #4"
 
+# Thresholds currently used in the risk logic
+SOURCE_TURBIDITY_THRESHOLD = 5.0
+COAGULATION_TURBIDITY_THRESHOLD = 5.0
+CT_THRESHOLD = 0.7
+BROMATE_THRESHOLD = 8.0
+COLIFORM_THRESHOLD = 2.5
+AEROMONAS_THRESHOLD = 0.3
 
-# =========================================================
-# GENERIC HELPERS
-# =========================================================
-def to_float(value: Any) -> float:
-    if isinstance(value, list):
-        if not value:
-            return 0.0
-        return to_float(value[0])
+
+# --------------------------------------------------
+# HELPERS
+# --------------------------------------------------
+def unwrap(x):
     try:
-        return float(value)
+        if hasattr(x, "tolist"):
+            x = x.tolist()
+        if isinstance(x, list):
+            return float(x[0])
+        return float(x)
     except Exception:
-        return 0.0
+        return x
 
 
-def level_from_score(score: int) -> str:
+def clamp_score(value: int) -> int:
+    return max(1, min(5, int(value)))
+
+
+def score_to_class(score: int) -> str:
+    score = clamp_score(score)
     if score <= 2:
         return "Low"
     if score == 3:
@@ -131,713 +141,502 @@ def level_from_score(score: int) -> str:
     return "High"
 
 
-def traffic_light(level: str) -> str:
-    if level == "Low":
-        return "green"
-    if level == "Moderate":
-        return "amber"
-    return "red"
-
-
-def probability_proxy_from_class(level: str) -> float:
-    mapping = {
-        "Low": 0.10,
-        "Moderate": 0.25,
-        "High": 0.60,
+def make_band(score: int, extra: dict | None = None) -> dict:
+    payload = {
+        "class": score_to_class(score),
+        "score": clamp_score(score),
     }
-    return mapping.get(level, 0.25)
+    if extra:
+        payload.update(extra)
+    return payload
 
 
-def likelihood_block(level: str, score: int, note: str) -> Dict[str, Any]:
+def overall_from_scores(*scores: int) -> dict:
+    max_score = max(scores) if scores else 1
     return {
-        "class": level,
-        "score": score,
-        "probability_proxy": probability_proxy_from_class(level),
-        "operational_meaning": note,
+        "class": score_to_class(max_score),
+        "score": clamp_score(max_score),
     }
 
 
-def severity_block(level: str, score: int, deviation_ratio: float, note: str) -> Dict[str, Any]:
-    return {
-        "class": level,
-        "score": score,
-        "deviation_ratio": round(deviation_ratio, 3),
-        "operational_meaning": note,
-    }
+def action_from_class(risk_class: str) -> str:
+    if risk_class == "High":
+        return "Immediate operator review and mitigation are recommended."
+    if risk_class == "Moderate":
+        return "Increase monitoring frequency and review operational settings."
+    return "Maintain routine monitoring and continue normal operation."
 
 
-def consequence_block(level: str, score: int, base_class: Optional[str] = None) -> Dict[str, Any]:
-    return {
-        "class": level,
-        "score": score,
-        "base_class": base_class or level,
-    }
-
-
-def overall_risk_block(likelihood_score: int, severity_score: int, consequence_score: int) -> Dict[str, Any]:
-    # weighted but still easy to explain
-    combined_score = round((0.35 * likelihood_score) + (0.35 * severity_score) + (0.30 * consequence_score), 2)
-
-    if combined_score < 2.0:
-        level = "Low"
-    elif combined_score < 3.25:
-        level = "Moderate"
-    else:
-        level = "High"
-
-    return {
-        "class": level,
-        "score": combined_score,
-        "traffic_light": traffic_light(level),
-    }
-
-
-def make_graph_payload(
-    module_name: str,
-    sensor_name: str,
-    hazard_id: str,
-    risk_obj: Dict[str, Any],
-    short_term_actions: List[str],
-    long_term_actions: List[str],
-) -> Dict[str, Any]:
-    return {
-        "nodes": [
-            {"id": "sensor", "label": sensor_name, "group": "sensor"},
-            {"id": "hazard", "label": hazard_id, "group": "hazard"},
-            {"id": "risk", "label": risk_obj["overall_risk"]["class"], "group": "risk"},
-            {"id": "short", "label": "Short-term actions", "group": "action"},
-            {"id": "long", "label": "Long-term actions", "group": "action"},
-        ],
-        "edges": [
-            {"source": "sensor", "target": "hazard"},
-            {"source": "hazard", "target": "risk"},
-            {"source": "risk", "target": "short"},
-            {"source": "risk", "target": "long"},
-        ],
-        "decision_tree": {
-            "root_question": f"Is the current {module_name} condition acceptable?",
-            "if_no": {
-                "hazard": hazard_id,
-                "risk_class": risk_obj["overall_risk"]["class"],
-                "short_term_actions": short_term_actions,
-                "long_term_actions": long_term_actions,
-            },
-            "if_yes": {
-                "message": "Continue routine monitoring and trend analysis."
-            },
-        },
-    }
-
-
-def build_risk_response(
+def build_response(
     *,
+    submodule: str,
+    sensor: str,
+    sensor_or_model: str,
     hazard_id: str,
     hazard_description: str,
-    module: str,
-    sensor: str,
-    parameter: str,
-    prediction: Any,
-    threshold: Any,
-    monitoring_sensors: List[str],
-    likelihood: Dict[str, Any],
-    severity: Dict[str, Any],
-    consequence: Dict[str, Any],
-    short_term_actions: List[str],
-    long_term_actions: List[str],
-    operator_message: str,
-    reviewer_summary: str,
+    prediction,
+    threshold,
+    likelihood: dict,
+    severity: dict,
+    consequence: dict,
+    overall_risk: dict,
+    recommended_action: str,
     yopi_sensitive: bool = False,
-    extra: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    overall = overall_risk_block(
-        likelihood["score"],
-        severity["score"],
-        consequence["score"],
-    )
-
-    response = {
+    short_term_actions: list[str] | None = None,
+    long_term_actions: list[str] | None = None,
+    operator_message: str | None = None,
+    graph_payload: dict | None = None,
+):
+    return {
+        "module": MODULE_RISK,
+        "submodule": submodule,
+        "sensor": sensor,
+        "sensor_or_model": sensor_or_model,
         "hazard_id": hazard_id,
         "hazard_description": hazard_description,
-        "module": module,
-        "sensor": sensor,
-        "parameter": parameter,
         "prediction": prediction,
         "threshold": threshold,
-        "monitoring_sensors": monitoring_sensors,
         "likelihood": likelihood,
         "severity": severity,
         "consequence": consequence,
-        "overall_risk": overall,
-        "short_term_actions": short_term_actions,
-        "long_term_actions": long_term_actions,
+        "overall_risk": overall_risk,
+        "recommended_action": recommended_action,
+        "short_term_actions": short_term_actions or [],
+        "long_term_actions": long_term_actions or [],
         "operator_message": operator_message,
-        "reviewer_summary": reviewer_summary,
+        "reviewer_summary": (
+            f"{sensor} is translated into a {overall_risk['class'].lower()} risk level "
+            f"based on likelihood, severity, and consequence."
+        ),
         "vulnerable_groups": {
-            "yopi_sensitive": yopi_sensitive,
             "note": (
-                "Vulnerable consumers should be prioritized when microbiological protection "
-                "or by-product formation may be compromised."
+                "YOPI-sensitive condition considered in the severity assessment."
                 if yopi_sensitive
-                else "No additional YOPI emphasis applied in this assessment."
-            ),
+                else ""
+            )
         },
+        "graph_payload": graph_payload or {},
     }
 
-    response["graph_payload"] = make_graph_payload(
-        module_name=module,
-        sensor_name=sensor,
-        hazard_id=hazard_id,
-        risk_obj=response,
-        short_term_actions=short_term_actions,
-        long_term_actions=long_term_actions,
-    )
 
-    if extra:
-        response.update(extra)
+# --------------------------------------------------
+# RISK CLASSIFIERS
+# --------------------------------------------------
+def classify_source_risk(predicted_turbidity: float, threshold: float, yopi_sensitive: bool):
+    ratio = predicted_turbidity / threshold if threshold > 0 else 0.0
 
-    return response
-
-
-# =========================================================
-# HAZARD-SPECIFIC BUILDERS
-# =========================================================
-def build_source_turbidity_risk(predicted_turbidity: float, threshold: float, yopi_sensitive: bool) -> Dict[str, Any]:
-    deviation_ratio = 0.0 if threshold == 0 else max((predicted_turbidity - threshold) / threshold, 0.0)
-
-    if predicted_turbidity <= threshold:
-        l_score, s_score, c_score = 2, 2, 2
-        l_class, s_class, c_class = "Moderate", "Moderate", "Low"
-        operator_message = "Early change signal detected in source water; continue preventive monitoring."
-    elif predicted_turbidity <= threshold * 1.4:
-        l_score, s_score, c_score = 3, 3, 2
-        l_class, s_class, c_class = "Moderate", "Moderate", "Low"
-        operator_message = "Elevated inlet turbidity may propagate downstream; review coagulation readiness."
+    if ratio <= 1.0:
+        likelihood_score = 2
+    elif ratio <= 1.2:
+        likelihood_score = 3
     else:
-        l_score, s_score, c_score = 4, 4, 3
-        l_class, s_class, c_class = "High", "High", "Moderate"
-        operator_message = "High source turbidity may challenge barrier performance from intake through treatment."
+        likelihood_score = 5
 
-    return build_risk_response(
+    if ratio <= 1.0:
+        severity_score = 2
+    elif ratio <= 1.3:
+        severity_score = 3
+    else:
+        severity_score = 4
+
+    if yopi_sensitive:
+        severity_score += 1
+
+    severity_score = clamp_score(severity_score)
+    consequence_score = max(likelihood_score, severity_score)
+    overall = overall_from_scores(likelihood_score, severity_score, consequence_score)
+
+    return build_response(
+        submodule="Source / Intake",
+        sensor="SoSe #9",
+        sensor_or_model=SOSE_9_NAME,
         hazard_id="high_turbidity_source",
-        hazard_description=(
-            "High concentrations of turbidity, particulate matter, suspended solids, or algae at intake."
-        ),
-        module=MODULE_SOURCE,
-        sensor=SOSE_9_NAME,
-        parameter="turbidity",
+        hazard_description="Elevated turbidity at the intake may increase treatment stress and reduce operational robustness.",
         prediction=predicted_turbidity,
         threshold=threshold,
-        monitoring_sensors=["Turbidity", "Chlorophyll A", "Raw water intake quality"],
-        likelihood=likelihood_block(
-            l_class,
-            l_score,
-            "Likelihood reflects the probability that changing source-water conditions will stress downstream treatment barriers.",
+        likelihood=make_band(
+            likelihood_score,
+            {"probability_proxy": round(min(max(ratio - 1.0, 0.0), 1.0), 3)},
         ),
-        severity=severity_block(
-            s_class,
-            s_score,
-            deviation_ratio,
-            "Severity reflects how far the expected inlet condition deviates from the operational threshold.",
+        severity=make_band(
+            severity_score,
+            {"deviation_ratio": round(ratio, 3)},
         ),
-        consequence=consequence_block(
-            c_class,
-            c_score,
-            base_class="Low",
-        ),
+        consequence=make_band(consequence_score),
+        overall_risk=overall,
+        recommended_action=action_from_class(overall["class"]),
+        yopi_sensitive=yopi_sensitive,
         short_term_actions=[
-            "Increase intake and raw-water quality monitoring frequency.",
-            "Alert treatment operators to possible increased coagulant demand.",
-            "Check whether downstream coagulation settings remain appropriate.",
+            "Increase intake-quality monitoring frequency.",
+            "Review raw-water abstraction strategy.",
+            "Alert treatment operators for possible upstream deterioration.",
         ],
         long_term_actions=[
-            "Strengthen source-water event forecasting and intake early-warning integration.",
-            "Link source risk automatically to treatment setpoint review logic.",
-            "Refine source-to-treatment intervention pathways for seasonal or weather-driven events.",
+            "Refine source-side alarm thresholds.",
+            "Integrate upstream catchment indicators into the risk logic.",
         ],
-        operator_message=operator_message,
-        reviewer_summary=(
-            "This source risk view translates SoSe #9 into an upstream early-warning signal "
-            "that can cascade into treatment and distribution planning."
-        ),
-        yopi_sensitive=yopi_sensitive,
+        operator_message="Review intake conditions and prepare treatment-side mitigation if turbidity remains elevated.",
+        graph_payload={"ratio_to_threshold": round(ratio, 3)},
     )
 
 
-def build_coagulation_risk(prediction: float, yopi_sensitive: bool) -> Dict[str, Any]:
-    # threshold logic aligned with your earlier UI / risk discussion
-    threshold = 6.0
-    deviation_ratio = max((prediction - threshold) / threshold, 0.0)
-
-    if prediction <= 4.0:
-        hazard_id = "stable_coagulation"
-        hazard_description = "Coagulation output remains within acceptable operational range."
-        l_class, l_score = "Low", 1
-        s_class, s_score = "Low", 1
-        c_class, c_score = "Low", 1
-        operator_message = "Coagulation appears stable; maintain monitoring and dosage verification."
-    elif prediction <= 6.0:
-        hazard_id = "borderline_coagulation_performance"
-        hazard_description = "Borderline removal of particulate material and organic matter after coagulation."
-        l_class, l_score = "Moderate", 3
-        s_class, s_score = "Moderate", 3
-        c_class, c_score = "Moderate", 3
-        operator_message = "Coagulation is approaching the limit; review FeCl3 dosage and flocculation conditions."
+def classify_coagulation_risk(prediction: float):
+    if prediction <= 2:
+        likelihood_score = 2
+    elif prediction <= COAGULATION_TURBIDITY_THRESHOLD:
+        likelihood_score = 3
     else:
-        hazard_id = "insufficient_coagulation"
-        hazard_description = "Insufficient removal of contaminants such as particulate material and organic matter."
-        l_class, l_score = "High", 4
-        s_class, s_score = "Moderate", 3
-        c_class, c_score = "Moderate", 3
-        operator_message = "Risk of insufficient coagulation performance; intervene before breakthrough propagates downstream."
+        likelihood_score = 5
 
-    return build_risk_response(
-        hazard_id=hazard_id,
-        hazard_description=hazard_description,
-        module="Treatment - Coagulation",
-        sensor=SOSE_8_NAME,
-        parameter="predicted_turbidity_after_coagulation",
+    if prediction <= 2:
+        severity_score = 2
+    elif prediction <= 6:
+        severity_score = 3
+    else:
+        severity_score = 4
+
+    consequence_score = max(likelihood_score, severity_score)
+    overall = overall_from_scores(likelihood_score, severity_score, consequence_score)
+
+    return build_response(
+        submodule="Treatment / Coagulation",
+        sensor="SoSe #8",
+        sensor_or_model=SOSE_8_NAME,
+        hazard_id="high_turbidity_after_coagulation",
+        hazard_description="Poor coagulation performance may result in insufficient particle removal and downstream treatment stress.",
         prediction=prediction,
-        threshold=threshold,
-        monitoring_sensors=[
-            "Output turbidity after coagulation/flocculation",
-            "FeCl3 dosage",
-            "pH",
-            "Raw water turbidity",
-        ],
-        likelihood=likelihood_block(
-            l_class,
-            l_score,
-            "Likelihood reflects the expected probability of poor particulate removal under the current coagulation state.",
+        threshold=COAGULATION_TURBIDITY_THRESHOLD,
+        likelihood=make_band(
+            likelihood_score,
+            {"probability_proxy": round(min(prediction / 10.0, 1.0), 3)},
         ),
-        severity=severity_block(
-            s_class,
-            s_score,
-            deviation_ratio,
-            "Severity reflects how far the expected coagulation outcome deviates from the operational turbidity target.",
+        severity=make_band(
+            severity_score,
+            {"deviation_ratio": round(prediction / COAGULATION_TURBIDITY_THRESHOLD, 3)},
         ),
-        consequence=consequence_block(
-            c_class,
-            c_score,
-            base_class="Moderate",
-        ),
+        consequence=make_band(consequence_score),
+        overall_risk=overall,
+        recommended_action=action_from_class(overall["class"]),
         short_term_actions=[
-            "Verify current FeCl3 dosage and compare with recent raw-water conditions.",
-            "Check pH and mixing/flocculation conditions.",
-            "Increase operator attention on downstream rapid sand filtration performance.",
+            "Review FeCl3 dosing.",
+            "Verify raw water pH and temperature conditions.",
+            "Inspect coagulation/flocculation performance.",
         ],
         long_term_actions=[
-            "Connect SoSe #8 outputs to automated coagulant decision support.",
-            "Validate soft-sensor alarms with plant data and operator feedback.",
-            "Integrate coagulation risk with source-event forecasting.",
+            "Refine coagulation control logic.",
+            "Retrain or recalibrate the coagulation model if needed.",
         ],
-        operator_message=operator_message,
-        reviewer_summary=(
-            "This endpoint translates SoSe #8 into a treatment risk statement linked to barrier performance and corrective action."
-        ),
-        yopi_sensitive=yopi_sensitive,
+        operator_message="Investigate coagulation performance if predicted turbidity remains elevated.",
+        graph_payload={"predicted_turbidity": prediction},
     )
 
 
-def build_rl_dosage_risk(data: RLDosageRiskInput, yopi_sensitive: bool) -> Dict[str, Any]:
-    current_dose = data.current_fecl3_dose
-    recommended_dose = data.recommended_fecl3_dose
-    confidence = data.confidence
-    dose_gap = abs(recommended_dose - current_dose)
-    dose_gap_ratio = 0.0 if current_dose == 0 else dose_gap / current_dose
+def classify_rl_risk(
+    current_fecl3_dose: float,
+    recommended_fecl3_dose: float,
+    output_turbidity: float,
+    confidence: float,
+):
+    dose_deviation = abs(recommended_fecl3_dose - current_fecl3_dose)
+    relative_deviation = (
+        dose_deviation / current_fecl3_dose
+        if current_fecl3_dose > 0
+        else dose_deviation
+    )
 
-    if confidence < 0.5:
-        l_class, l_score = "Moderate", 3
-        s_class, s_score = "Moderate", 3
-        c_class, c_score = "Low", 2
-        msg = "RL recommendation requires careful operator validation due to limited confidence."
-    elif dose_gap_ratio < 0.10:
-        l_class, l_score = "Low", 1
-        s_class, s_score = "Low", 1
-        c_class, c_score = "Low", 1
-        msg = "RL recommendation is close to current practice; low operational disruption expected."
-    elif dose_gap_ratio < 0.25:
-        l_class, l_score = "Moderate", 3
-        s_class, s_score = "Moderate", 3
-        c_class, c_score = "Moderate", 3
-        msg = "RL recommendation suggests a meaningful dosing adjustment; operator review is recommended."
+    if dose_deviation <= 0.5:
+        likelihood_score = 2
+    elif dose_deviation <= 2.0:
+        likelihood_score = 3
     else:
-        l_class, l_score = "High", 4
-        s_class, s_score = "Moderate", 3
-        c_class, c_score = "Moderate", 3
-        msg = "RL recommendation deviates strongly from current dosage; confirm plant conditions before implementation."
+        likelihood_score = 5
 
-    return build_risk_response(
-        hazard_id="dosage_mismatch_or_unverified_optimization",
-        hazard_description=(
-            "Potential mismatch between current FeCl3 dosage and the dosage recommended by the RL optimization layer."
+    if output_turbidity <= 2:
+        severity_score = 2
+    elif output_turbidity <= COAGULATION_TURBIDITY_THRESHOLD:
+        severity_score = 3
+    else:
+        severity_score = 4
+
+    if confidence < 0.6:
+        severity_score += 1
+
+    severity_score = clamp_score(severity_score)
+    consequence_score = max(likelihood_score, severity_score)
+    overall = overall_from_scores(likelihood_score, severity_score, consequence_score)
+
+    return build_response(
+        submodule="Treatment / Coagulation",
+        sensor="RL #5",
+        sensor_or_model=RL_5_NAME,
+        hazard_id="incorrect_rl_dose_application",
+        hazard_description="Applying an RL-recommended dose without sufficient confidence or deviation review may destabilize coagulation performance.",
+        prediction=recommended_fecl3_dose,
+        threshold=current_fecl3_dose,
+        likelihood=make_band(
+            likelihood_score,
+            {"probability_proxy": round(min(relative_deviation, 1.0), 3)},
         ),
-        module="Treatment - Coagulation",
-        sensor=RL_4_NAME,
-        parameter="recommended_fecl3_dose",
-        prediction=recommended_dose,
-        threshold=current_dose,
-        monitoring_sensors=[
-            "Current FeCl3 dose",
-            "Recommended FeCl3 dose",
-            "Output turbidity",
-            "Model confidence / applicability domain",
-        ],
-        likelihood=likelihood_block(
-            l_class,
-            l_score,
-            "Likelihood reflects the probability that acting on the recommendation without review may create operational instability.",
+        severity=make_band(
+            severity_score,
+            {"deviation_ratio": round(relative_deviation, 3)},
         ),
-        severity=severity_block(
-            s_class,
-            s_score,
-            dose_gap_ratio,
-            "Severity reflects the relative deviation between current and recommended coagulant dosage.",
-        ),
-        consequence=consequence_block(
-            c_class,
-            c_score,
-            base_class="Low",
-        ),
+        consequence=make_band(consequence_score),
+        overall_risk=overall,
+        recommended_action=action_from_class(overall["class"]),
         short_term_actions=[
-            "Compare recommended dosage with current raw-water conditions.",
-            "Review operator acceptance before large dose changes are applied.",
-            "Validate the recommendation against turbidity and downstream filter behaviour.",
+            "Review the RL recommendation before implementation.",
+            "Compare current and recommended FeCl3 doses.",
+            "Verify predicted output turbidity against plant targets.",
         ],
         long_term_actions=[
-            "Define confidence thresholds for automatic vs operator-reviewed RL suggestions.",
-            "Link RL recommendations to historical plant performance benchmarking.",
-            "Add explainability features for dosing recommendations in the UI.",
+            "Validate RL recommendations with historical operator decisions.",
+            "Introduce confidence-based acceptance rules.",
         ],
-        operator_message=msg,
-        reviewer_summary=(
-            "RL #4 is treated as a decision-support layer whose risk depends on recommendation confidence and dosage deviation."
-        ),
-        yopi_sensitive=yopi_sensitive,
-        extra={
-            "current_fecl3_dose": current_dose,
-            "dose_gap": round(dose_gap, 3),
-            "dose_gap_ratio": round(dose_gap_ratio, 3),
+        operator_message="Apply RL output carefully and verify operator acceptance before adjusting dose.",
+        graph_payload={
+            "current_fecl3_dose": current_fecl3_dose,
+            "recommended_fecl3_dose": recommended_fecl3_dose,
+            "dose_deviation": round(dose_deviation, 3),
             "confidence": confidence,
         },
     )
 
 
-def build_ct_risk(prediction: float, yopi_sensitive: bool) -> Dict[str, Any]:
-    threshold = 0.70
-    deviation_ratio = 0.0 if threshold == 0 else max((threshold - prediction) / threshold, 0.0)
-
-    if prediction >= 0.70:
-        l_class, l_score = "Low", 1
-        s_class, s_score = "Low", 1
-        c_class, c_score = "Low", 1
-        hazard_id = "sufficient_ozonation_exposure"
-        hazard_description = "CT indicates sufficient ozonation exposure for disinfection support."
-        msg = "CT appears acceptable; continue monitoring the balance between disinfection and DBP control."
-    elif prediction >= 0.30:
-        l_class, l_score = "Moderate", 3
-        s_class, s_score = "Moderate", 3
-        c_class, c_score = "Moderate", 3
-        hazard_id = "borderline_ozonation_exposure"
-        hazard_description = "CT is borderline and may weaken disinfection robustness."
-        msg = "CT is approaching an insufficient zone; review contact time and dosage conditions."
+def classify_ct_risk(prediction: float):
+    if prediction >= CT_THRESHOLD:
+        likelihood_score = 2
+    elif prediction >= 0.3:
+        likelihood_score = 3
     else:
-        l_class, l_score = "High", 4
-        s_class, s_score = "High", 4
-        c_class, c_score = "Major", 4
-        hazard_id = "insufficient_ozonation"
-        hazard_description = "Insufficient ozonation may compromise disinfection of source water."
-        msg = "CT is too low; prioritize disinfection security and investigate process constraints."
+        likelihood_score = 5
 
-    return build_risk_response(
-        hazard_id=hazard_id,
-        hazard_description=hazard_description,
-        module="Treatment - Ozonation",
-        sensor=SOSE_10_NAME,
-        parameter="CT",
+    if prediction >= CT_THRESHOLD:
+        severity_score = 2
+    elif prediction >= 0.3:
+        severity_score = 3
+    else:
+        severity_score = 4
+
+    consequence_score = max(likelihood_score, severity_score)
+    overall = overall_from_scores(likelihood_score, severity_score, consequence_score)
+
+    return build_response(
+        submodule="Treatment / Ozonation",
+        sensor="SoSe #10",
+        sensor_or_model=SOSE_10_NAME,
+        hazard_id="insufficient_ct",
+        hazard_description="Insufficient CT may compromise disinfection performance in the ozonation stage.",
         prediction=prediction,
-        threshold=threshold,
-        monitoring_sensors=["CT", "Ozone dosage", "Flow rate", "Water temperature"],
-        likelihood=likelihood_block(
-            l_class,
-            l_score,
-            "Likelihood reflects the expected probability that current CT conditions are insufficient for robust disinfection support.",
+        threshold=CT_THRESHOLD,
+        likelihood=make_band(
+            likelihood_score,
+            {"probability_proxy": round(max(0.0, CT_THRESHOLD - prediction), 3)},
         ),
-        severity=severity_block(
-            "High" if s_score >= 4 else s_class,
-            s_score,
-            deviation_ratio,
-            "Severity reflects how far the predicted CT falls below the desired disinfection-support threshold.",
+        severity=make_band(
+            severity_score,
+            {"deviation_ratio": round(prediction / CT_THRESHOLD, 3)},
         ),
-        consequence=consequence_block(
-            "High" if c_score >= 4 else c_class,
-            c_score,
-            base_class="Moderate",
-        ),
+        consequence=make_band(consequence_score),
+        overall_risk=overall,
+        recommended_action=action_from_class(overall["class"]),
         short_term_actions=[
-            "Review ozone dosage, hydraulic residence time, and chamber conditions.",
-            "Check whether changes in flow or turbidity reduced effective contact time.",
-            "Cross-check the CT signal with bromate and coliform-related outputs.",
+            "Review ozone dosage and hydraulic conditions.",
+            "Check flow rate and contact time assumptions.",
         ],
         long_term_actions=[
-            "Improve joint optimization of CT, bromate, and microbial risk.",
-            "Calibrate CT alarm thresholds with plant and validation data.",
-            "Integrate CT risk directly into source-to-tap intervention pathways.",
+            "Refine CT model calibration.",
+            "Improve operational envelopes for ozone control.",
         ],
-        operator_message=msg,
-        reviewer_summary=(
-            "SoSe #10 is translated into a disinfection-reliability risk signal rather than just a raw prediction."
-        ),
-        yopi_sensitive=yopi_sensitive,
+        operator_message="Low CT values require immediate review of disinfection performance.",
+        graph_payload={"ct_value": prediction},
     )
 
 
-def build_bromate_risk(prediction: float, yopi_sensitive: bool) -> Dict[str, Any]:
-    threshold = 8.0
-    deviation_ratio = 0.0 if threshold == 0 else max((prediction - threshold) / threshold, 0.0)
-
-    if prediction <= 3.0:
-        l_class, l_score = "Low", 1
-        s_class, s_score = "Low", 1
-        c_class, c_score = "Low", 1
-        hazard_id = "controlled_bromate_formation"
-        hazard_description = "Bromate formation is within a comfortable operating zone."
-        msg = "Bromate appears controlled; continue balancing disinfection and DBP minimization."
-    elif prediction <= 8.0:
-        l_class, l_score = "Moderate", 3
-        s_class, s_score = "Moderate", 3
-        c_class, c_score = "Moderate", 3
-        hazard_id = "elevated_bromate_formation"
-        hazard_description = "Bromate formation is elevated and approaching the risk threshold."
-        msg = "Bromate risk is increasing; review ozone dose, contact time, and upstream organic load."
+def classify_bromate_risk(prediction: float):
+    if prediction <= 3:
+        likelihood_score = 2
+    elif prediction <= BROMATE_THRESHOLD:
+        likelihood_score = 3
     else:
-        l_class, l_score = "High", 4
-        s_class, s_score = "Moderate", 3
-        c_class, c_score = "Moderate", 3
-        hazard_id = "excessive_ozonation"
-        hazard_description = "Excessive ozonation may promote bromate formation and unnecessary cost."
-        msg = "Bromate risk is too high; reduce DBP pressure while maintaining disinfection coverage."
+        likelihood_score = 5
 
-    return build_risk_response(
-        hazard_id=hazard_id,
-        hazard_description=hazard_description,
-        module="Treatment - Ozonation",
-        sensor=SOSE_101_NAME,
-        parameter="bromate",
+    if prediction <= 3:
+        severity_score = 2
+    elif prediction <= BROMATE_THRESHOLD:
+        severity_score = 3
+    else:
+        severity_score = 5
+
+    consequence_score = max(likelihood_score, severity_score)
+    overall = overall_from_scores(likelihood_score, severity_score, consequence_score)
+
+    return build_response(
+        submodule="Treatment / Ozonation",
+        sensor="SoSe #10.1",
+        sensor_or_model=SOSE_101_NAME,
+        hazard_id="bromate_formation_risk",
+        hazard_description="High bromate formation may threaten compliance and water-quality objectives.",
         prediction=prediction,
-        threshold=threshold,
-        monitoring_sensors=["Bromate", "Ozone dosage", "CT", "Raw water quality"],
-        likelihood=likelihood_block(
-            l_class,
-            l_score,
-            "Likelihood reflects the probability that current ozonation conditions promote problematic bromate formation.",
+        threshold=BROMATE_THRESHOLD,
+        likelihood=make_band(
+            likelihood_score,
+            {"probability_proxy": round(min(prediction / 10.0, 1.0), 3)},
         ),
-        severity=severity_block(
-            s_class,
-            s_score,
-            deviation_ratio,
-            "Severity reflects how far the predicted bromate outcome approaches or exceeds the target threshold.",
+        severity=make_band(
+            severity_score,
+            {"deviation_ratio": round(prediction / BROMATE_THRESHOLD, 3)},
         ),
-        consequence=consequence_block(
-            c_class,
-            c_score,
-            base_class="Moderate",
-        ),
+        consequence=make_band(consequence_score),
+        overall_risk=overall,
+        recommended_action=action_from_class(overall["class"]),
         short_term_actions=[
-            "Review ozone dosage and chamber operating conditions.",
-            "Check whether CT targets are being achieved with unnecessary DBP stress.",
-            "Increase bromate attention when raw-water quality changes suddenly.",
+            "Review ozone dosage and contact conditions.",
+            "Verify bromate control constraints.",
         ],
         long_term_actions=[
-            "Strengthen integrated CT–bromate operating envelopes.",
-            "Use bromate risk outputs in multi-objective control design.",
-            "Refine decision-support logic for disinfection vs by-product trade-offs.",
+            "Optimize bromate-aware control logic.",
+            "Improve seasonal bromate forecasting.",
         ],
-        operator_message=msg,
-        reviewer_summary=(
-            "SoSe #10.1 makes the DBP side of ozonation explicit and supports risk-based trade-off decisions."
-        ),
-        yopi_sensitive=yopi_sensitive,
+        operator_message="High bromate prediction requires immediate review of ozonation settings.",
+        graph_payload={"bromate_prediction": prediction},
     )
 
 
-def build_coliform_risk(prediction: float, yopi_sensitive: bool) -> Dict[str, Any]:
-    threshold = 1.5
-    deviation_ratio = 0.0 if threshold == 0 else max((threshold - prediction) / threshold, 0.0)
-
-    # Higher prediction = better removal in your old interpretation
-    if prediction >= 2.5:
-        l_class, l_score = "Low", 1
-        s_class, s_score = "Low", 1
-        c_class, c_score = "Low", 1
-        hazard_id = "strong_microbial_removal"
-        hazard_description = "Predicted microbial removal efficiency is strong."
-        msg = "Coliform removal appears robust under the current ozonation conditions."
+def classify_coliform_risk(prediction: float):
+    if prediction >= COLIFORM_THRESHOLD:
+        likelihood_score = 2
     elif prediction >= 1.5:
-        l_class, l_score = "Moderate", 3
-        s_class, s_score = "Moderate", 3
-        c_class, c_score = "Moderate", 3
-        hazard_id = "borderline_microbial_removal"
-        hazard_description = "Predicted microbial removal is borderline and should be reviewed."
-        msg = "Coliform removal is not critical yet, but the microbial barrier should be watched closely."
+        likelihood_score = 3
     else:
-        l_class, l_score = "High", 4
-        s_class, s_score = "High", 4
-        c_class, c_score = "High", 4
-        hazard_id = "insufficient_microbial_removal"
-        hazard_description = "Predicted microbial removal efficiency is insufficient."
-        msg = "Microbial protection may be weakened; prioritize barrier reliability and verification."
+        likelihood_score = 5
 
-    return build_risk_response(
-        hazard_id=hazard_id,
-        hazard_description=hazard_description,
-        module="Treatment - Ozonation",
-        sensor=SOSE_102_NAME,
-        parameter="coliform_removal",
+    if prediction >= COLIFORM_THRESHOLD:
+        severity_score = 2
+    elif prediction >= 1.5:
+        severity_score = 3
+    else:
+        severity_score = 4
+
+    consequence_score = max(likelihood_score, severity_score)
+    overall = overall_from_scores(likelihood_score, severity_score, consequence_score)
+
+    return build_response(
+        submodule="Treatment / Ozonation",
+        sensor="SoSe #10.2",
+        sensor_or_model=SOSE_102_NAME,
+        hazard_id="insufficient_coliform_removal",
+        hazard_description="Low predicted coliform removal may indicate insufficient microbial risk reduction.",
         prediction=prediction,
-        threshold=threshold,
-        monitoring_sensors=["Coliform removal proxy", "CT", "Ozone dosage", "Flow rate"],
-        likelihood=likelihood_block(
-            l_class,
-            l_score,
-            "Likelihood reflects the expected probability that current ozonation conditions do not provide adequate microbial removal robustness.",
+        threshold=COLIFORM_THRESHOLD,
+        likelihood=make_band(
+            likelihood_score,
+            {"probability_proxy": round(max(0.0, COLIFORM_THRESHOLD - prediction), 3)},
         ),
-        severity=severity_block(
-            s_class,
-            s_score,
-            deviation_ratio,
-            "Severity reflects the distance from the desired microbial-removal performance level.",
+        severity=make_band(
+            severity_score,
+            {"deviation_ratio": round(prediction / COLIFORM_THRESHOLD, 3)},
         ),
-        consequence=consequence_block(
-            c_class,
-            c_score,
-            base_class="Moderate",
-        ),
+        consequence=make_band(consequence_score),
+        overall_risk=overall,
+        recommended_action=action_from_class(overall["class"]),
         short_term_actions=[
-            "Verify current ozone exposure conditions and CT support.",
-            "Review any simultaneous signs of low CT or source-water deterioration.",
-            "Increase operator awareness when microbial safety margins narrow.",
+            "Review ozonation disinfection conditions.",
+            "Inspect CT assumptions and supporting inputs.",
         ],
         long_term_actions=[
-            "Integrate microbial-risk outputs more explicitly with disinfection control logic.",
-            "Validate the coliform model with plant and monitoring data.",
-            "Use model outputs to support risk-based alarm tuning for microbial protection.",
+            "Refine microbial removal validation.",
+            "Link model outputs to microbial safety margins.",
         ],
-        operator_message=msg,
-        reviewer_summary=(
-            "SoSe #10.2 supports the microbiological side of ozonation risk and complements CT-based interpretation."
-        ),
-        yopi_sensitive=yopi_sensitive,
+        operator_message="Low predicted coliform removal requires review of disinfection robustness.",
+        graph_payload={"coliform_prediction": prediction},
     )
 
 
-def build_aeromonas_risk(data: DistributionRiskInput) -> Dict[str, Any]:
-    p = data.aeromonas_probability
-    score_boost = 0
-    active_drivers = []
+def classify_distribution_risk(
+    aeromonas_probability: float,
+    residual_disinfectant_low: bool,
+    warm_water_condition: bool,
+    stagnation_risk: bool,
+    yopi_sensitive: bool,
+):
+    likelihood_score = 2
+    if aeromonas_probability > AEROMONAS_THRESHOLD:
+        likelihood_score = 3
+    if aeromonas_probability > 0.6:
+        likelihood_score = 5
 
-    if data.residual_disinfectant_low:
-        score_boost += 1
-        active_drivers.append("low residual disinfectant")
-    if data.warm_water_condition:
-        score_boost += 1
-        active_drivers.append("warm water condition")
-    if data.stagnation_risk:
-        score_boost += 1
-        active_drivers.append("stagnation risk")
+    severity_score = 2
+    if residual_disinfectant_low:
+        severity_score += 1
+    if warm_water_condition:
+        severity_score += 1
+    if stagnation_risk:
+        severity_score += 1
+    if yopi_sensitive:
+        severity_score += 1
 
-    if p < 0.20:
-        base_l_score, base_s_score, base_c_score = 1, 2, 2
-        base_l_class, base_s_class, base_c_class = "Low", "Moderate", "Low"
-        msg = "Aeromonas risk appears low, but biological instability should still be monitored."
-    elif p < 0.50:
-        base_l_score, base_s_score, base_c_score = 3, 3, 3
-        base_l_class, base_s_class, base_c_class = "Moderate", "Moderate", "Moderate"
-        msg = "Aeromonas signal suggests possible biological instability in the distribution system."
-    else:
-        base_l_score, base_s_score, base_c_score = 4, 3, 3
-        base_l_class, base_s_class, base_c_class = "High", "Moderate", "Moderate"
-        msg = "Aeromonas-related risk is elevated; distribution conditions should be reviewed."
+    severity_score = clamp_score(severity_score)
+    consequence_score = max(likelihood_score, severity_score)
+    overall = overall_from_scores(likelihood_score, severity_score, consequence_score)
 
-    l_score = min(base_l_score + score_boost, 4)
-    s_score = min(base_s_score + (1 if data.yopi_sensitive else 0), 4)
-    c_score = base_c_score + (1 if (data.yopi_sensitive and p >= 0.5) else 0)
-    c_score = min(c_score, 4)
-
-    l_class = level_from_score(l_score)
-    s_class = level_from_score(s_score)
-    c_class = level_from_score(c_score)
-
-    return build_risk_response(
+    return build_response(
+        submodule="Distribution",
+        sensor="SoSe #11",
+        sensor_or_model=SOSE_11_NAME,
         hazard_id="distribution_biological_instability",
-        hazard_description=(
-            "Potential Aeromonas occurrence and biological instability in the distribution system, "
-            "which may indicate regrowth-favouring conditions in treated drinking water."
+        hazard_description="Biological instability in the distribution system may increase Aeromonas occurrence and downstream health risk.",
+        prediction=aeromonas_probability,
+        threshold=AEROMONAS_THRESHOLD,
+        likelihood=make_band(
+            likelihood_score,
+            {"probability_proxy": round(aeromonas_probability, 3)},
         ),
-        module=MODULE_DISTRIBUTION,
-        sensor=SOSE_11_NAME,
-        parameter="aeromonas_probability",
-        prediction=p,
-        threshold=0.50,
-        monitoring_sensors=[
-            "Aeromonas model output",
-            "Residual disinfectant",
-            "Temperature",
-            "Residence time / stagnation indicators",
-        ],
-        likelihood=likelihood_block(
-            l_class,
-            l_score,
-            "Likelihood reflects the probability that distribution conditions favour Aeromonas occurrence or broader biological instability.",
+        severity=make_band(
+            severity_score,
+            {
+                "deviation_ratio": round(
+                    aeromonas_probability / AEROMONAS_THRESHOLD, 3
+                )
+            },
         ),
-        severity=severity_block(
-            s_class,
-            s_score,
-            p,
-            "Severity reflects the strength of the Aeromonas signal and the importance of potentially favourable regrowth conditions.",
-        ),
-        consequence=consequence_block(
-            c_class,
-            c_score,
-            base_class="Moderate",
-        ),
+        consequence=make_band(consequence_score),
+        overall_risk=overall,
+        recommended_action=action_from_class(overall["class"]),
+        yopi_sensitive=yopi_sensitive,
         short_term_actions=[
-            "Review low residual disinfectant zones and hydraulic weak points.",
-            "Check whether warm water, stagnation, or residence time issues are present.",
-            "Increase targeted distribution monitoring where biological instability is suspected.",
+            "Review residual disinfectant status.",
+            "Inspect warm-water and stagnation-prone zones.",
         ],
         long_term_actions=[
-            "Improve distribution-system risk mapping for microbial regrowth vulnerability.",
-            "Link Aeromonas predictions with network hydraulics and temperature information.",
-            "Refine biological stability monitoring as SoSe #11 evolves.",
+            "Improve network flushing and monitoring strategy.",
+            "Refine biological instability prediction logic.",
         ],
-        operator_message=msg,
-        reviewer_summary=(
-            "SoSe #11 is treated as a distribution biological-instability signal, even while the model remains under evaluation."
-        ),
-        yopi_sensitive=data.yopi_sensitive,
-        extra={
-            "active_distribution_drivers": active_drivers,
-            "model_status": "Under evaluation / subject to change",
+        operator_message="Distribution conditions suggest increased biological instability risk.",
+        graph_payload={
+            "aeromonas_probability": aeromonas_probability,
+            "residual_disinfectant_low": residual_disinfectant_low,
+            "warm_water_condition": warm_water_condition,
+            "stagnation_risk": stagnation_risk,
         },
     )
 
 
-# =========================================================
+# --------------------------------------------------
 # OVERVIEW
-# =========================================================
+# --------------------------------------------------
 @router.get("/overview", summary="Risk module overview")
 def risk_overview():
     return {
         "module": MODULE_RISK,
         "description": (
-            "Transforms hard-sensor and soft-sensor signals into source-to-tap risk "
-            "statements including likelihood, severity, consequence, overall risk, "
-            "and mitigation actions."
+            "Transforms hard-sensor and soft-sensor predictions into actionable risk "
+            "levels, reasons, and mitigation measures across Source, Treatment, and Distribution."
         ),
         "available_risk_functions": [
             "/risk/source/sose-9/current",
             "/risk/coagulation",
-            "/risk/treatment/rl-4/current",
+            "/risk/treatment/rl-5/current",
             "/risk/ct",
             "/risk/bromate",
             "/risk/coliform",
@@ -846,430 +645,352 @@ def risk_overview():
             "/risk/treatment/current",
             "/risk/system/current",
         ],
-        "reviewer_highlights": [
-            "Hazard-to-risk translation",
-            "Short-term and long-term mitigation guidance",
-            "Combined ozonation risk",
-            "Whole treatment risk",
-            "Whole source-to-tap risk",
-            "Graph-ready and decision-tree-ready output",
+        "modules_supported": [
+            MODULE_SOURCE,
+            MODULE_TREATMENT,
+            MODULE_DISTRIBUTION,
         ],
         "sensors_and_models_in_platform": [
-            {"name": SOSE_9_NAME, "module": MODULE_SOURCE, "type": "Soft sensor", "status": "Implemented"},
-            {"name": SOSE_8_NAME, "module": "Treatment - Coagulation", "type": "Soft sensor", "status": "Implemented"},
-            {"name": RL_4_NAME, "module": "Treatment - Coagulation", "type": "Soft sensor", "status": "Implemented"},
-            {"name": SOSE_10_NAME, "module": "Treatment - Ozonation", "type": "Soft sensor", "status": "Implemented"},
-            {"name": SOSE_101_NAME, "module": "Treatment - Ozonation", "type": "Soft sensor", "status": "Implemented"},
-            {"name": SOSE_102_NAME, "module": "Treatment - Ozonation", "type": "Soft sensor", "status": "Implemented"},
-            {"name": SOSE_11_NAME, "module": MODULE_DISTRIBUTION, "type": "Soft sensor", "status": "Under evaluation / subject to change"},
-            {"name": BACTOSENSE_4_NAME, "module": MODULE_TREATMENT, "type": "Hard sensor", "status": "Connected conceptually / placeholder"},
+            {
+                "name": SOSE_9_NAME,
+                "type": "Soft sensor",
+                "module": "Source / Intake",
+                "status": "Implemented",
+                "utility": "Waternet #DC1",
+            },
+            {
+                "name": SOSE_8_NAME,
+                "type": "Soft sensor",
+                "module": "Treatment - Coagulation",
+                "status": "Implemented",
+                "utility": "Waternet #DC1",
+            },
+            {
+                "name": RL_5_NAME,
+                "type": "Soft sensor",
+                "module": "Treatment - Coagulation",
+                "status": "Implemented",
+                "utility": "Waternet #DC1",
+            },
+            {
+                "name": SOSE_10_NAME,
+                "type": "Soft sensor",
+                "module": "Treatment - Ozonation",
+                "status": "Implemented",
+                "utility": "Waternet #DC1",
+            },
+            {
+                "name": SOSE_101_NAME,
+                "type": "Soft sensor",
+                "module": "Treatment - Ozonation",
+                "status": "Implemented",
+                "utility": "Waternet #DC1",
+            },
+            {
+                "name": SOSE_102_NAME,
+                "type": "Soft sensor",
+                "module": "Treatment - Ozonation",
+                "status": "Implemented",
+                "utility": "Waternet #DC1",
+            },
+            {
+                "name": SOSE_11_NAME,
+                "type": "Soft sensor",
+                "module": "Distribution",
+                "status": "Under evaluation / subject to change",
+                "utility": "Waternet #DC1",
+            },
+            {
+                "name": BACTOSENSE_4_NAME,
+                "type": "Hard sensor",
+                "module": "Treatment",
+                "status": "Connected conceptually / to be aligned in UI",
+                "utility": "Waternet #DC1",
+            },
         ],
     }
 
 
-# =========================================================
-# SOURCE RISK
-# =========================================================
-@router.post("/source/sose-9/current", summary="Current source risk from SoSe #9")
-def source_sose_9_risk(data: SourceRiskInput):
-    return build_source_turbidity_risk(
+# --------------------------------------------------
+# INDIVIDUAL RISK ENDPOINTS
+# --------------------------------------------------
+@router.post("/source/sose-9/current", summary="Source SoSe #9 risk assessment")
+def source_risk(data: SourceRiskInput):
+    return classify_source_risk(
         predicted_turbidity=data.predicted_turbidity,
         threshold=data.threshold,
         yopi_sensitive=data.yopi_sensitive,
     )
 
 
-# =========================================================
-# COAGULATION RISK
-# =========================================================
 @router.post("/coagulation", summary="Coagulation risk assessment")
-def coagulation_risk(body: CoagulationInput, yopi_sensitive: bool = True):
+def coagulation_risk(body: CoagulationInput):
     try:
-        prediction = to_float(run_coagulation_prediction(body))
-        return build_coagulation_risk(prediction, yopi_sensitive)
+        prediction = unwrap(run_coagulation_prediction(body))
+        return classify_coagulation_risk(prediction)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Coagulation risk assessment failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Coagulation risk assessment failed: {str(e)}",
+        )
 
 
-# =========================================================
-# RL #4 RISK
-# =========================================================
-@router.post("/treatment/rl-4/current", summary="RL #4 dosage recommendation risk")
-def rl4_risk(data: RLDosageRiskInput, yopi_sensitive: bool = True):
-    return build_rl_dosage_risk(data, yopi_sensitive)
+@router.post("/treatment/rl-5/current", summary="RL #5 dosage risk assessment")
+def rl5_risk(data: RLRiskInput):
+    try:
+        return classify_rl_risk(
+            current_fecl3_dose=data.current_fecl3_dose,
+            recommended_fecl3_dose=data.recommended_fecl3_dose,
+            output_turbidity=data.output_turbidity,
+            confidence=data.confidence,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"RL #5 risk assessment failed: {str(e)}",
+        )
 
 
-# =========================================================
-# CT RISK
-# =========================================================
 @router.post("/ct", summary="CT risk assessment")
-def ct_risk(data: CTInput, yopi_sensitive: bool = True):
+def ct_risk(data: CTInput):
     try:
-        pred = to_float(predict_ct([[
-            data.Chamber,
-            data.WaterTemperature,
-            data.RFTurbidity,
-            data.FlowRate,
-            data.Ozonedosage,
-        ]]))
-        return build_ct_risk(pred, yopi_sensitive)
+        pred = unwrap(
+            predict_ct([[
+                data.Chamber,
+                data.WaterTemperature,
+                data.RFTurbidity,
+                data.FlowRate,
+                data.Ozonedosage,
+            ]])
+        )
+        return classify_ct_risk(pred)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"CT risk assessment failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"CT risk assessment failed: {str(e)}",
+        )
 
 
-# =========================================================
-# BROMATE RISK
-# =========================================================
 @router.post("/bromate", summary="Bromate risk assessment")
-def bromate_risk(data: BromateInput, yopi_sensitive: bool = True):
+def bromate_risk(data: BromateInput):
     try:
-        pred = to_float(predict_bromate([[
-            data.month,
-            data.Chamber,
-            data.WaterTemperature,
-            data.RFTurbidity,
-            data.FlowRate,
-            data.Ozonedosage,
-            data.Residencetime,
-            data.WaterTemperature_1,
-            data.RFturbidity_1,
-            data.FlowRate_1,
-            data.Ozonedosage_1,
-            data.CT_All,
-        ]]))
-        return build_bromate_risk(pred, yopi_sensitive)
+        pred = unwrap(
+            predict_bromate([[
+                data.month,
+                data.Chamber,
+                data.WaterTemperature,
+                data.RFTurbidity,
+                data.FlowRate,
+                data.Ozonedosage,
+                data.Residencetime,
+                data.WaterTemperature_1,
+                data.RFturbidity_1,
+                data.FlowRate_1,
+                data.Ozonedosage_1,
+                data.CT_All,
+            ]])
+        )
+        return classify_bromate_risk(pred)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Bromate risk assessment failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Bromate risk assessment failed: {str(e)}",
+        )
 
 
-# =========================================================
-# COLIFORM RISK
-# =========================================================
 @router.post("/coliform", summary="Coliform-removal risk assessment")
-def coliform_risk(data: ColiformInput, yopi_sensitive: bool = True):
+def coliform_risk(data: ColiformInput):
     try:
-        pred = to_float(predict_coliform([[
-            data.Chamber,
-            data.WaterTemperature,
-            data.RFTurbidity,
-            data.FlowRate,
-            data.Ozonedosage,
-            data.RFturbidity_1,
-            data.CT_All,
-        ]]))
-        return build_coliform_risk(pred, yopi_sensitive)
+        pred = unwrap(
+            predict_coliform([[
+                data.Chamber,
+                data.WaterTemperature,
+                data.RFTurbidity,
+                data.FlowRate,
+                data.Ozonedosage,
+                data.RFturbidity_1,
+                data.CT_All,
+            ]])
+        )
+        return classify_coliform_risk(pred)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Coliform risk assessment failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Coliform risk assessment failed: {str(e)}",
+        )
 
 
-# =========================================================
-# DISTRIBUTION RISK
-# =========================================================
-@router.post("/distribution/sose-11/current", summary="Current distribution risk from SoSe #11")
-def distribution_sose_11_risk(data: DistributionRiskInput):
-    return build_aeromonas_risk(data)
-
-
-# =========================================================
+# --------------------------------------------------
 # COMBINED OZONATION RISK
-# =========================================================
+# --------------------------------------------------
 @router.post("/ozonation/current", summary="Combined ozonation risk")
 def ozonation_risk(data: OzonationRiskInput):
     try:
-        ct_pred = to_float(predict_ct([[
-            data.ct.Chamber,
-            data.ct.WaterTemperature,
-            data.ct.RFTurbidity,
-            data.ct.FlowRate,
-            data.ct.Ozonedosage,
-        ]]))
+        ct_component = ct_risk(data.ct)
+        bromate_component = bromate_risk(data.bromate)
+        coliform_component = coliform_risk(data.coliform)
 
-        br_pred = to_float(predict_bromate([[
-            data.bromate.month,
-            data.bromate.Chamber,
-            data.bromate.WaterTemperature,
-            data.bromate.RFTurbidity,
-            data.bromate.FlowRate,
-            data.bromate.Ozonedosage,
-            data.bromate.Residencetime,
-            data.bromate.WaterTemperature_1,
-            data.bromate.RFturbidity_1,
-            data.bromate.FlowRate_1,
-            data.bromate.Ozonedosage_1,
-            data.bromate.CT_All,
-        ]]))
-
-        col_pred = to_float(predict_coliform([[
-            data.coliform.Chamber,
-            data.coliform.WaterTemperature,
-            data.coliform.RFTurbidity,
-            data.coliform.FlowRate,
-            data.coliform.Ozonedosage,
-            data.coliform.RFturbidity_1,
-            data.coliform.CT_All,
-        ]]))
-
-        ct_r = build_ct_risk(ct_pred, data.yopi_sensitive)
-        br_r = build_bromate_risk(br_pred, data.yopi_sensitive)
-        col_r = build_coliform_risk(col_pred, data.yopi_sensitive)
-
-        overall = overall_risk_block(
-            max(ct_r["likelihood"]["score"], br_r["likelihood"]["score"], col_r["likelihood"]["score"]),
-            max(ct_r["severity"]["score"], br_r["severity"]["score"], col_r["severity"]["score"]),
-            max(ct_r["consequence"]["score"], br_r["consequence"]["score"], col_r["consequence"]["score"]),
+        overall = overall_from_scores(
+            ct_component["overall_risk"]["score"],
+            bromate_component["overall_risk"]["score"],
+            coliform_component["overall_risk"]["score"],
         )
-
-        if overall["class"] == "High":
-            action = "Prioritize ozonation review immediately and balance microbial protection against DBP formation."
-        elif overall["class"] == "Moderate":
-            action = "Review ozonation trade-offs and maintain tighter operator attention."
-        else:
-            action = "Maintain current ozonation monitoring and continue trend-based supervision."
 
         return {
             "module": MODULE_RISK,
-            "submodule": "Treatment - Ozonation",
+            "submodule": "Treatment / Ozonation",
             "overall_risk": overall,
-            "recommended_action": action,
-            "source_to_tap_relevance": (
-                "Ozonation risk affects both microbial protection and by-product control, "
-                "making it a key barrier in source-to-tap decision support."
-            ),
+            "recommended_action": action_from_class(overall["class"]),
             "components": {
-                "ct": ct_r,
-                "bromate": br_r,
-                "coliform": col_r,
+                "ct": ct_component,
+                "bromate": bromate_component,
+                "coliform": coliform_component,
             },
-            "graph_payload": {
-                "nodes": [
-                    {"id": "ct", "label": "SoSe #10", "group": "sensor"},
-                    {"id": "br", "label": "SoSe #10.1", "group": "sensor"},
-                    {"id": "col", "label": "SoSe #10.2", "group": "sensor"},
-                    {"id": "oz_hazard", "label": "Ozonation trade-off", "group": "hazard"},
-                    {"id": "oz_risk", "label": overall["class"], "group": "risk"},
-                ],
-                "edges": [
-                    {"source": "ct", "target": "oz_hazard"},
-                    {"source": "br", "target": "oz_hazard"},
-                    {"source": "col", "target": "oz_hazard"},
-                    {"source": "oz_hazard", "target": "oz_risk"},
-                ],
+            "reviewer_summary": "Combined ozonation risk integrates CT, bromate, and coliform-related model outputs.",
+            "vulnerable_groups": {
+                "note": (
+                    "YOPI-sensitive condition considered in the ozonation risk review."
+                    if data.yopi_sensitive
+                    else ""
+                )
             },
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Combined ozonation risk failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Combined ozonation risk failed: {str(e)}",
+        )
 
 
-# =========================================================
+# --------------------------------------------------
+# DISTRIBUTION RISK
+# --------------------------------------------------
+@router.post("/distribution/sose-11/current", summary="Distribution SoSe #11 risk assessment")
+def distribution_risk(data: DistributionRiskInput):
+    try:
+        return classify_distribution_risk(
+            aeromonas_probability=data.aeromonas_probability,
+            residual_disinfectant_low=data.residual_disinfectant_low,
+            warm_water_condition=data.warm_water_condition,
+            stagnation_risk=data.stagnation_risk,
+            yopi_sensitive=data.yopi_sensitive,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Distribution risk assessment failed: {str(e)}",
+        )
+
+
+# --------------------------------------------------
 # TREATMENT CURRENT RISK
-# =========================================================
+# Combines coagulation + RL + ozonation
+# --------------------------------------------------
 @router.post("/treatment/current", summary="Current treatment risk")
 def treatment_current_risk(data: TreatmentRiskInput):
     try:
-        coag_pred = to_float(run_coagulation_prediction(data.coagulation))
-        coag_r = build_coagulation_risk(coag_pred, data.yopi_sensitive)
+        coag_component = coagulation_risk(data.coagulation)
+        rl_component = rl5_risk(data.rl)
+        ozonation_component = ozonation_risk(data.ozonation)
 
-        oz_r = ozonation_risk(data.ozonation)
-
-        rl_r = None
-        if data.rl is not None:
-            rl_r = build_rl_dosage_risk(data.rl, data.yopi_sensitive)
-
-        severity_scores = [coag_r["severity"]["score"], oz_r["overall_risk"]["score"]]
-        likelihood_scores = [coag_r["likelihood"]["score"], int(round(oz_r["overall_risk"]["score"]))]
-        consequence_scores = [coag_r["consequence"]["score"], int(round(oz_r["overall_risk"]["score"]))]
-
-        if rl_r:
-            severity_scores.append(rl_r["severity"]["score"])
-            likelihood_scores.append(rl_r["likelihood"]["score"])
-            consequence_scores.append(rl_r["consequence"]["score"])
-
-        treatment_overall = overall_risk_block(
-            max(likelihood_scores),
-            max(severity_scores),
-            max(consequence_scores),
+        overall = overall_from_scores(
+            coag_component["overall_risk"]["score"],
+            rl_component["overall_risk"]["score"],
+            ozonation_component["overall_risk"]["score"],
         )
-
-        if treatment_overall["class"] == "High":
-            treatment_action = "Treatment barriers require coordinated review, starting with the dominant high-risk process."
-        elif treatment_overall["class"] == "Moderate":
-            treatment_action = "Treatment is under manageable stress; increase cross-process awareness and verify settings."
-        else:
-            treatment_action = "Treatment appears stable; continue routine barrier monitoring."
 
         return {
             "module": MODULE_RISK,
-            "submodule": MODULE_TREATMENT,
-            "overall_risk": treatment_overall,
-            "recommended_action": treatment_action,
-            "dominant_focus": (
-                "coagulation"
-                if coag_r["overall_risk"]["score"] >= oz_r["overall_risk"]["score"]
-                else "ozonation"
-            ),
+            "submodule": "Treatment",
+            "overall_risk": overall,
+            "recommended_action": action_from_class(overall["class"]),
             "components": {
-                "coagulation": coag_r,
-                "rl_optimization": rl_r,
-                "ozonation": oz_r,
+                "coagulation": coag_component,
+                "rl": rl_component,
+                "ozonation": ozonation_component,
             },
-            "reviewer_summary": (
-                "This treatment endpoint aggregates barrier-level risks across coagulation and ozonation "
-                "instead of reporting isolated model outputs."
-            ),
+            "reviewer_summary": "Treatment risk combines coagulation, RL dosage recommendation, and ozonation-related risks.",
+            "vulnerable_groups": {
+                "note": (
+                    "YOPI-sensitive condition considered in the treatment risk review."
+                    if data.yopi_sensitive
+                    else ""
+                )
+            },
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Treatment current risk failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Treatment current risk failed: {str(e)}",
+        )
 
 
-# =========================================================
-# SYSTEM CURRENT RISK
-# =========================================================
-@router.post("/system/current", summary="Current source-to-tap system-wide risk")
-def system_current_risk(data: SystemRiskInput):
+# --------------------------------------------------
+# SYSTEM CURRENT RISK - POST
+# --------------------------------------------------
+@router.post("/system/current", summary="Current system-wide risk")
+def system_current_risk_post(data: SystemRiskInput):
     try:
-        source_r = build_source_turbidity_risk(
-            predicted_turbidity=data.source.predicted_turbidity,
-            threshold=data.source.threshold,
-            yopi_sensitive=data.source.yopi_sensitive,
+        source_component = source_risk(data.source)
+        treatment_component = treatment_current_risk(data.treatment)
+        distribution_component = distribution_risk(data.distribution)
+
+        overall = overall_from_scores(
+            source_component["overall_risk"]["score"],
+            treatment_component["overall_risk"]["score"],
+            distribution_component["overall_risk"]["score"],
         )
 
-        treatment_r = treatment_current_risk(data.treatment)
-
-        distribution_r = build_aeromonas_risk(data.distribution)
-
-        source_score = source_r["overall_risk"]["score"]
-        treatment_score = treatment_r["overall_risk"]["score"]
-        distribution_score = distribution_r["overall_risk"]["score"]
-
-        barrier_scores = {
-            "source": source_score,
-            "treatment": treatment_score,
-            "distribution": distribution_score,
-        }
-
-        dominant_module = max(barrier_scores, key=barrier_scores.get)
-        dominant_score = barrier_scores[dominant_module]
-
-        if dominant_score == source_score:
-            dominant_hazard = source_r["hazard_description"]
-        elif dominant_score == treatment_score:
-            dominant_hazard = "Treatment barrier stress driven by coagulation and/or ozonation conditions."
-        else:
-            dominant_hazard = distribution_r["hazard_description"]
-
-        system_overall = overall_risk_block(
-            max(
-                source_r["likelihood"]["score"],
-                treatment_r["overall_risk"]["score"],
-                distribution_r["likelihood"]["score"],
-            ),
-            max(
-                source_r["severity"]["score"],
-                int(round(treatment_r["overall_risk"]["score"])),
-                distribution_r["severity"]["score"],
-            ),
-            max(
-                source_r["consequence"]["score"],
-                int(round(treatment_r["overall_risk"]["score"])),
-                distribution_r["consequence"]["score"],
-            ),
-        )
-
-        if system_overall["class"] == "High":
-            operator_message = (
-                "High source-to-tap risk detected. Prioritize the dominant module immediately and verify barrier continuity."
-            )
-        elif system_overall["class"] == "Moderate":
-            operator_message = (
-                "Moderate source-to-tap risk detected. Strengthen coordination between source, treatment, and distribution monitoring."
-            )
-        else:
-            operator_message = (
-                "Source-to-tap risk currently appears low. Continue preventive surveillance and trend analysis."
-            )
-
-        short_term_actions = [
-            "Review the dominant module first.",
-            "Check whether upstream conditions are cascading into downstream barriers.",
-            "Increase monitoring frequency where barrier stress is highest.",
-        ]
-        long_term_actions = [
-            "Implement a fully connected source-to-tap intervention pathway module.",
-            "Use risk outputs to support integrated operator dashboards and alarm logic.",
-            "Calibrate thresholds with plant data, expert feedback, and utility-specific practices.",
-        ]
+        dominant = max(
+            [
+                ("Source / Intake", source_component["overall_risk"]["score"]),
+                ("Treatment", treatment_component["overall_risk"]["score"]),
+                ("Distribution", distribution_component["overall_risk"]["score"]),
+            ],
+            key=lambda x: x[1],
+        )[0]
 
         return {
             "module": MODULE_RISK,
-            "submodule": MODULE_SYSTEM,
-            "scope": "Source-to-tap",
-            "overall_risk": system_overall,
-            "dominant_module": dominant_module,
-            "dominant_hazard": dominant_hazard,
-            "barrier_status": {
-                "source": source_r["overall_risk"]["class"],
-                "treatment": treatment_r["overall_risk"]["class"],
-                "distribution": distribution_r["overall_risk"]["class"],
-            },
-            "operator_message": operator_message,
-            "short_term_actions": short_term_actions,
-            "long_term_actions": long_term_actions,
-            "reviewer_summary": (
-                "This system-wide endpoint integrates Source, Treatment, and Distribution signals into "
-                "a single operational source-to-tap risk view."
-            ),
+            "submodule": "System",
+            "overall_risk": overall,
+            "system_status": "connected",
+            "dominant_module": dominant,
+            "recommended_action": action_from_class(overall["class"]),
             "components": {
-                "source": source_r,
-                "treatment": treatment_r,
-                "distribution": distribution_r,
+                "source": source_component,
+                "treatment": treatment_component,
+                "distribution": distribution_component,
             },
-            "graph_payload": {
-                "nodes": [
-                    {"id": "source", "label": "Source / Intake", "group": "module"},
-                    {"id": "treatment", "label": "Treatment", "group": "module"},
-                    {"id": "distribution", "label": "Distribution", "group": "module"},
-                    {"id": "system_risk", "label": system_overall["class"], "group": "risk"},
-                ],
-                "edges": [
-                    {"source": "source", "target": "treatment", "label": "cascading influence"},
-                    {"source": "treatment", "target": "distribution", "label": "barrier continuity"},
-                    {"source": "source", "target": "system_risk"},
-                    {"source": "treatment", "target": "system_risk"},
-                    {"source": "distribution", "target": "system_risk"},
-                ],
-                "decision_tree": {
-                    "root_question": "Is the source-to-tap system within acceptable risk bounds?",
-                    "if_no": {
-                        "first_priority": dominant_module,
-                        "dominant_hazard": dominant_hazard,
-                        "short_term_actions": short_term_actions,
-                        "long_term_actions": long_term_actions,
-                    },
-                    "if_yes": {
-                        "message": "Continue routine integrated monitoring and preventive control."
-                    },
-                },
-            },
+            "reviewer_summary": "System risk aggregates Source, Treatment, and Distribution risk responses into one source-to-tap view.",
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"System current risk failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"System current risk failed: {str(e)}",
+        )
 
 
-# =========================================================
-# OPTIONAL GET PLACEHOLDER FOR UI COMPATIBILITY
-# =========================================================
+# --------------------------------------------------
+# SYSTEM CURRENT RISK - GET PLACEHOLDER
+# --------------------------------------------------
 @router.get("/system/current", summary="Current system-wide risk placeholder")
-def system_current_risk_placeholder():
+def system_current_risk_get():
     return {
         "module": MODULE_RISK,
-        "submodule": MODULE_SYSTEM,
-        "scope": "Source-to-tap",
+        "submodule": "System",
         "note": (
-            "Use POST /risk/system/current with Source, Treatment, and Distribution inputs "
-            "to calculate the full dynamic system-wide risk."
+            "This GET endpoint is a lightweight placeholder. "
+            "Use POST /risk/system/current for the full connected source-to-tap risk calculation."
         ),
-        "status": "ready_for_connected_inputs",
+        "overall_risk": {"class": "Moderate", "score": 3},
+        "system_status": "partially_connected",
+        "dominant_module": MODULE_TREATMENT,
+        "recommended_action": (
+            "Review treatment risk outputs first; connect Source / Intake "
+            f"({SOSE_9_NAME}) and Distribution ({SOSE_11_NAME}) to enable full system aggregation."
+        ),
     }

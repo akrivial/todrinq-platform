@@ -14,6 +14,7 @@ print(">>> PYTHON:", sys.executable)
 print(">>> MAIN __file__:", __file__)
 
 # --- Clean public routers only ---
+from app.routes.predict import router as predict_router
 from app.routes.risk import router as risk_router
 from app.routes.ngsi_notify import router as ngsi_router
 from app.routes.mock_pims import router as mock_pims_router
@@ -103,6 +104,7 @@ def serve_ui2():
     return _serve_ui_html()
 
 # --- Public routers shown in Swagger ---
+app.include_router(predict_router)
 app.include_router(source_router, prefix="/source", tags=["Source Module"])
 app.include_router(treatment_router, prefix="/treatment", tags=["Treatment Module"])
 app.include_router(distribution_router, prefix="/distribution", tags=["Distribution Module"])

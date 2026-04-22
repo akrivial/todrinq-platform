@@ -54,7 +54,7 @@
 
       <button class="module-tile" data-nav="screen-treatment">
         <span class="module-name">Treatment</span>
-        <span class="module-desc">SoSe #8, RL #4, ozonation suite, PIMS-connected screens, and hard sensors</span>
+        <span class="module-desc">SoSe #8, RL #5, ozonation suite, PIMS-connected screens, and hard sensors</span>
       </button>
 
       <button class="module-tile" data-nav="screen-distribution">
@@ -96,7 +96,7 @@
           <ul>
             <li>SoSe #9 – Early prediction of turbidity in DWTP inlet</li>
             <li>SoSe #8 – Coagulation-flocculation turbidity estimation</li>
-            <li>RL #4 – Optimal FeCl₃ dosage for coagulation</li>
+            <li>RL #5 – Optimal FeCl₃ dosage for coagulation</li>
             <li>SoSe #10 / #10.1 / #10.2 – Ozonation suite</li>
             <li>SoSe #11 – Aeromonas prediction model</li>
           </ul>
@@ -107,6 +107,7 @@
           <ul>
             <li>Mock/live coagulation mode</li>
             <li>PIMS-style live polling</li>
+            <li>RL-based dosage recommendation</li>
             <li>Ozonation dashboard</li>
             <li>Rich source-to-tap risk translation</li>
           </ul>
@@ -163,7 +164,7 @@
         <h3>Treatment Module</h3>
         <p>
           The Treatment module includes SoSe #8 for coagulation-flocculation turbidity estimation,
-          RL #4 for dosage recommendation, the ozonation suite (SoSe #10, #10.1, #10.2),
+          RL #5 for dosage recommendation, the ozonation suite (SoSe #10, #10.1, #10.2),
           PIMS-style live mode, and the placeholder structure for hard sensors.
         </p>
       </div>
@@ -182,6 +183,14 @@
           <div class="card-title">SoSe #8 – Coagulation-Flocculation Turbidity Estimation</div>
           <div class="card-desc">
             Manual input and live/mock PIMS mode for the treatment coagulation soft sensor.
+          </div>
+        </div>
+
+        <div class="card" data-nav="screen-rl5">
+          <div class="card-tag">Implemented</div>
+          <div class="card-title">RL #5 – Optimal FeCl₃ Dosage</div>
+          <div class="card-desc">
+            Reinforcement-learning-based operational support for coagulation dosage recommendation.
           </div>
         </div>
 
@@ -271,13 +280,13 @@
           <div class="card-tag">Implemented</div>
           <div class="card-title">SoSe #8 – Coagulation-flocculation turbidity estimation</div>
           <div class="card-desc">
-            Treatment–Coagulation soft sensor for predicting turbidity after coagulation.
+            Treatment–Coagulation soft sensor for predicting outlet turbidity after coagulation/flocculation.
           </div>
         </div>
 
-        <div class="card disabled">
+        <div class="card" data-nav="screen-rl5">
           <div class="card-tag">Implemented</div>
-          <div class="card-title">RL #4 – Optimal FeCl₃ dosage for coagulation</div>
+          <div class="card-title">RL #5 – Optimal FeCl₃ dosage for coagulation</div>
           <div class="card-desc">
             Treatment–Coagulation reinforcement-learning model for recommending optimal FeCl₃ dosage.
           </div>
@@ -308,6 +317,7 @@
       <div class="section-head">
         <h3>SoSe #8 – Estimation of turbidity of the coagulation-flocculation process</h3>
         <p>
+          This soft sensor predicts the <strong>outlet turbidity after coagulation-flocculation</strong>.
           Manual mode uses the prediction endpoint. Live mode polls the live route, currently backed
           by mock PIMS data and ready to be replaced by real PIMS input later.
         </p>
@@ -382,17 +392,18 @@
           <div class="status-row">
             <span class="badge info" id="coagulation-mode-badge">Mode: manual</span>
             <span class="badge info" id="coagulation-badge">Status: ready</span>
+            <span class="badge info" id="coagulation-risk-badge">Risk: –</span>
           </div>
 
           <div class="metric-grid">
             <div class="metric">
-              <span class="metric-label">Prediction</span>
+              <span class="metric-label">Predicted outlet turbidity</span>
               <strong class="metric-value" id="coagulation-prediction">–</strong>
-              <div class="metric-unit">model output</div>
+              <div class="metric-unit">NTU / model output</div>
             </div>
 
             <div class="metric">
-              <span class="metric-label">Interpretation</span>
+              <span class="metric-label">Treatment status</span>
               <strong class="metric-value small" id="coagulation-status">–</strong>
               <div class="metric-unit">qualitative</div>
             </div>
@@ -404,7 +415,27 @@
             </div>
           </div>
 
-          <div class="mini-info">
+          <div class="metric-grid top-gap">
+            <div class="metric">
+              <span class="metric-label">Operational target</span>
+              <strong class="metric-value" id="coagulation-threshold">–</strong>
+              <div class="metric-unit">target NTU</div>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">Removal efficiency</span>
+              <strong class="metric-value" id="coagulation-efficiency">–</strong>
+              <div class="metric-unit">%</div>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">Target basis</span>
+              <strong class="metric-value small" id="coagulation-threshold-basis">–</strong>
+              <div class="metric-unit">raw-water regime</div>
+            </div>
+          </div>
+
+          <div class="mini-info top-gap">
             <strong>Latest live input values</strong><br />
             FTU: <span id="live-ftu">–</span> |
             FeCl₃: <span id="live-fecl3">–</span> |
@@ -415,8 +446,101 @@
             Year: <span id="live-year">–</span>
           </div>
 
+          <div class="note top-gap">
+            For reviewer-facing interpretation, this screen should compare
+            <strong>raw-water turbidity</strong> with <strong>predicted outlet turbidity</strong>
+            and automatically translate the result into treatment risk.
+          </div>
+
           <div class="chart-wrap">
             <canvas id="chart-coagulation"></canvas>
+          </div>
+
+          <div class="top-gap">
+            <h4>Automatic coagulation risk translation</h4>
+            <div id="coagulation-risk-output" class="json-box">
+              No coagulation risk result yet.
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- RL #5 -->
+    <section id="screen-rl5" class="screen">
+      <a class="back-link" href="#" data-nav="screen-treatment">← Back to Treatment</a>
+
+      <div class="section-head">
+        <h3>RL #5 – Optimal FeCl₃ dosage for coagulation</h3>
+        <p>
+          This screen presents the reinforcement-learning-based dosage recommendation for the
+          coagulation process. It can display the latest recommendation and supports operational
+          comparison between the current dose and the recommended dose.
+        </p>
+      </div>
+
+      <div class="layout">
+        <article class="panel">
+          <div class="panel-head">
+            <h4>Latest RL output</h4>
+            <button class="secondary-btn" id="btn-rl5-latest">Load latest</button>
+          </div>
+
+          <pre id="rl5-latest" class="json-box">Press “Load latest” to retrieve /treatment/coagulation/rl/latest</pre>
+
+          <div class="info-box">
+            This UI is aligned with <strong>RL #5</strong> for optimal FeCl₃ dosage support in the
+            coagulation process.
+          </div>
+        </article>
+
+        <article class="panel">
+          <h4>Operational recommendation input</h4>
+
+          <form id="form-rl5">
+            <div class="form-row">
+              <label for="rl5_current_fecl3_dose">Current FeCl₃ dose</label>
+              <input id="rl5_current_fecl3_dose" name="current_fecl3_dose" type="number" step="0.01" value="14.5" />
+            </div>
+
+            <div class="form-row">
+              <label for="rl5_recommended_fecl3_dose">Recommended FeCl₃ dose</label>
+              <input id="rl5_recommended_fecl3_dose" name="recommended_fecl3_dose" type="number" step="0.01" value="16.0" />
+            </div>
+
+            <div class="form-row">
+              <label for="rl5_output_turbidity">Predicted output turbidity</label>
+              <input id="rl5_output_turbidity" name="output_turbidity" type="number" step="0.01" value="5.4" />
+            </div>
+
+            <div class="form-row">
+              <label for="rl5_confidence">Confidence</label>
+              <input id="rl5_confidence" name="confidence" type="number" step="0.01" value="0.75" />
+            </div>
+
+            <div class="button-stack">
+              <button type="button" class="primary-btn" id="btn-rl5-demo">Load demo values</button>
+            </div>
+          </form>
+
+          <div class="metric-grid top-gap">
+            <div class="metric">
+              <span class="metric-label">Current dose</span>
+              <strong class="metric-value" id="rl5-current-dose-display">14.50</strong>
+              <div class="metric-unit">FeCl₃</div>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">Recommended dose</span>
+              <strong class="metric-value" id="rl5-recommended-dose-display">16.00</strong>
+              <div class="metric-unit">FeCl₃</div>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">Confidence</span>
+              <strong class="metric-value" id="rl5-confidence-display">0.75</strong>
+              <div class="metric-unit">score</div>
+            </div>
           </div>
         </article>
       </div>
@@ -806,9 +930,9 @@
           </div>
         </div>
 
-        <div class="card" data-nav="screen-risk-rl4">
+        <div class="card" data-nav="screen-risk-rl5">
           <div class="card-tag">Risk</div>
-          <div class="card-title">RL #4 Dosage Risk</div>
+          <div class="card-title">RL #5 Dosage Risk</div>
           <div class="card-desc">
             Review dosage recommendation deviation and confidence before action.
           </div>
@@ -913,7 +1037,10 @@
 
       <div class="section-head">
         <h3>SoSe #8 Coagulation Risk</h3>
-        <p>Use coagulation input fields and retrieve the translated risk response.</p>
+        <p>
+          This screen can still be used manually, but the coagulation prediction page should also
+          populate this risk logic automatically after each successful prediction.
+        </p>
       </div>
 
       <div class="layout">
@@ -939,17 +1066,17 @@
       </div>
     </section>
 
-    <section id="screen-risk-rl4" class="screen">
+    <section id="screen-risk-rl5" class="screen">
       <a class="back-link" href="#" data-nav="screen-risk">← Back</a>
 
       <div class="section-head">
-        <h3>RL #4 Dosage Risk</h3>
+        <h3>RL #5 Dosage Risk</h3>
         <p>Assess the operational risk of following the RL FeCl₃ dosage recommendation.</p>
       </div>
 
       <div class="layout">
         <article class="panel">
-          <form id="form-risk-rl4">
+          <form id="form-risk-rl5">
             <div class="form-row">
               <label for="risk_rl_current_fecl3_dose">Current FeCl₃ dose</label>
               <input id="risk_rl_current_fecl3_dose" name="current_fecl3_dose" type="number" step="0.01" value="14.5" />
@@ -974,7 +1101,7 @@
         </article>
 
         <article class="panel">
-          <div id="risk-rl4-output" class="json-box">No RL #4 risk result yet.</div>
+          <div id="risk-rl5-output" class="json-box">No RL #5 risk result yet.</div>
         </article>
       </div>
     </section>
@@ -1118,7 +1245,7 @@
             <div class="form-row"><label>Lane</label><input name="coagulation.lane" type="number" value="2" /></div>
             <div class="form-row"><label>Year</label><input name="coagulation.year" type="number" value="2025" /></div>
 
-            <h4>RL #4</h4>
+            <h4>RL #5</h4>
             <div class="form-row"><label>Current FeCl₃ dose</label><input name="rl.current_fecl3_dose" type="number" step="0.01" value="14.5" /></div>
             <div class="form-row"><label>Recommended FeCl₃ dose</label><input name="rl.recommended_fecl3_dose" type="number" step="0.01" value="16.0" /></div>
             <div class="form-row"><label>Output turbidity</label><input name="rl.output_turbidity" type="number" step="0.01" value="5.4" /></div>
@@ -1196,7 +1323,7 @@
               </select>
             </div>
 
-            <h4>Treatment / SoSe #8 + RL #4 + Ozonation</h4>
+            <h4>Treatment / SoSe #8 + RL #5 + Ozonation</h4>
             <div class="form-row"><label>Coagulation FTU</label><input name="treatment.coagulation.ftu_raw_water" type="number" step="0.01" value="6.2" /></div>
             <div class="form-row"><label>FeCl₃ concentration</label><input name="treatment.coagulation.fecl3_concentration" type="number" step="0.01" value="14.5" /></div>
             <div class="form-row"><label>Temperature</label><input name="treatment.coagulation.temperature_raw_water" type="number" step="0.1" value="12.0" /></div>
@@ -1290,699 +1417,3 @@
   </main>
 </body>
 </html>
-
-
-
-
-
-<!-- <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ToDrinQ Platform</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <link rel="stylesheet" href="/static/ui/styles.css" />
-  <script defer src="/static/ui/app.js"></script>
-</head>
-<body>
-  <header class="topbar">
-    <div>
-      <h1>ToDrinQ Platform</h1>
-      <p class="topbar-subtitle">
-        Modular decision-support platform for source, treatment, distribution, and risk evaluation
-      </p>
-    </div>
-
-    <div class="toplinks">
-      <a href="/docs" target="_blank">API Docs</a>
-      <a href="/healthz" target="_blank">Health</a>
-      <a href="/readyz" target="_blank">Ready</a>
-    </div>
-  </header>
-
-  <main class="page">
-    <section class="hero">
-      <div class="hero-badges">
-        <span class="pill">FIWARE-aligned</span>
-        <span class="pill">FastAPI backend</span>
-        <span class="pill">Modular architecture</span>
-        <span class="pill">Risk-aware</span>
-      </div>
-
-      <h2>Source → Treatment → Distribution → Risk</h2>
-      <p>
-        This interface presents the implemented platform as a modular backend with interactive
-        model screens, live/mock data views, and risk translation endpoints. The current implementation
-        prioritizes the sensors and soft sensors already integrated on the platform, while preserving
-        placeholders for future hard-sensor and model expansion.
-      </p>
-    </section>
-
-    <section class="architecture-row">
-      <button class="module-tile" data-nav="screen-source">
-        <span class="module-name">Source</span>
-        <span class="module-desc">Source-water overview and source-related sensor outputs</span>
-      </button>
-
-      <button class="module-tile" data-nav="screen-treatment">
-        <span class="module-name">Treatment</span>
-        <span class="module-desc">Coagulation and ozonation models, plus hard-sensor placeholders</span>
-      </button>
-
-      <button class="module-tile" data-nav="screen-distribution">
-        <span class="module-name">Distribution</span>
-        <span class="module-desc">Distribution monitoring and downstream predictive services</span>
-      </button>
-
-      <button class="module-tile" data-nav="screen-risk">
-        <span class="module-name">Risk</span>
-        <span class="module-desc">Translation of predictions into operational risk and mitigation</span>
-      </button>
-    </section>
-
-    <div id="breadcrumbs" class="breadcrumbs"></div>
-
-    <!-- HOME -->
-    <section id="screen-home" class="screen active">
-      <div class="section-head">
-        <h3>Platform overview</h3>
-        <p>
-          Select one of the four modules. The interface keeps the prediction functionality,
-          but now follows the platform architecture rather than only the old model list.
-        </p>
-      </div>
-
-      <div class="overview-grid">
-        <article class="info-card">
-          <h4>Implemented backend logic</h4>
-          <ul>
-            <li>Source Module</li>
-            <li>Treatment Module</li>
-            <li>Distribution Module</li>
-            <li>Risk Module</li>
-          </ul>
-        </article>
-
-        <article class="info-card">
-          <h4>Interactive model screens</h4>
-          <ul>
-            <li>Coagulation prediction</li>
-            <li>CT prediction</li>
-            <li>Bromate prediction</li>
-            <li>Coliform prediction</li>
-          </ul>
-        </article>
-
-        <article class="info-card">
-          <h4>Operational support</h4>
-          <ul>
-            <li>Mock PIMS integration</li>
-            <li>System health endpoints</li>
-            <li>Combined ozonation risk</li>
-            <li>Module-based organization</li>
-          </ul>
-        </article>
-      </div>
-    </section>
-
-    <!-- SOURCE -->
-    <section id="screen-source" class="screen">
-      <a class="back-link" href="#" data-nav="screen-home">← Back</a>
-
-      <div class="section-head">
-        <h3>Source Module</h3>
-        <p>
-          Source-water monitoring and source-related prediction services. This screen reflects the
-          implemented source endpoints and current Source module structure.
-        </p>
-      </div>
-
-      <div class="two-col">
-        <article class="panel">
-          <div class="panel-head">
-            <h4>Module overview</h4>
-            <button class="secondary-btn" id="btn-source-overview">Load overview</button>
-          </div>
-          <pre id="source-overview" class="json-box">Press “Load overview” to retrieve /source/overview</pre>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <h4>Latest source output</h4>
-            <button class="secondary-btn" id="btn-source-latest">Load latest</button>
-          </div>
-          <pre id="source-latest" class="json-box">Press “Load latest” to retrieve /source/sose-1/latest</pre>
-        </article>
-      </div>
-    </section>
-
-    <!-- TREATMENT -->
-    <section id="screen-treatment" class="screen">
-      <a class="back-link" href="#" data-nav="screen-home">← Back</a>
-
-      <div class="section-head">
-        <h3>Treatment Module</h3>
-        <p>
-          The Treatment module is the strongest implemented part of the current platform. It includes
-          coagulation prediction, ozonation models, and treatment-related hard-sensor placeholders.
-        </p>
-      </div>
-
-      <div class="subnav-grid">
-        <button class="subnav-card" data-nav="screen-treatment-overview">
-          <span>Treatment overview</span>
-        </button>
-        <button class="subnav-card" data-nav="screen-coagulation">
-          <span>Coagulation model</span>
-        </button>
-        <button class="subnav-card" data-nav="screen-ozonation">
-          <span>Ozonation models</span>
-        </button>
-        <button class="subnav-card" data-nav="screen-hard-sensors">
-          <span>Hard-sensor placeholder</span>
-        </button>
-      </div>
-    </section>
-
-    <section id="screen-treatment-overview" class="screen">
-      <a class="back-link" href="#" data-nav="screen-treatment">← Back</a>
-      <div class="section-head">
-        <h3>Treatment Module Overview</h3>
-        <p>Summary of the implemented Treatment module structure and available services.</p>
-      </div>
-
-      <div class="two-col">
-        <article class="panel">
-          <div class="panel-head">
-            <h4>Module overview</h4>
-            <button class="secondary-btn" id="btn-treatment-overview">Load overview</button>
-          </div>
-          <pre id="treatment-overview" class="json-box">Press “Load overview” to retrieve /treatment/overview</pre>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <h4>Latest coagulation output</h4>
-            <button class="secondary-btn" id="btn-treatment-coag-latest">Load latest</button>
-          </div>
-          <pre id="treatment-coag-latest" class="json-box">Press “Load latest” to retrieve /treatment/coagulation/latest</pre>
-        </article>
-      </div>
-    </section>
-
-    <section id="screen-coagulation" class="screen">
-      <a class="back-link" href="#" data-nav="screen-treatment">← Back</a>
-
-      <div class="section-head">
-        <h3>Coagulation Prediction</h3>
-        <p>
-          Manual prediction uses the coagulation model input form. Live mode uses mock-PIMS-backed
-          treatment data through the implemented backend route.
-        </p>
-      </div>
-
-      <div class="layout">
-        <article class="panel">
-          <h4>Manual input</h4>
-
-          <form id="form-coagulation">
-            <div class="form-row">
-              <label for="coag_ftu_raw_water">Raw water turbidity (FTU)</label>
-              <input id="coag_ftu_raw_water" name="ftu_raw_water" type="number" step="0.01" value="6.2" />
-            </div>
-
-            <div class="form-row">
-              <label for="coag_fecl3_concentration">FeCl₃ concentration</label>
-              <input id="coag_fecl3_concentration" name="fecl3_concentration" type="number" step="0.01" value="14.5" />
-            </div>
-
-            <div class="form-row">
-              <label for="coag_temperature_raw_water">Raw water temperature (°C)</label>
-              <input id="coag_temperature_raw_water" name="temperature_raw_water" type="number" step="0.1" value="12.0" />
-            </div>
-
-            <div class="form-row">
-              <label for="coag_ph_raw_water">Raw water pH</label>
-              <input id="coag_ph_raw_water" name="ph_raw_water" type="number" step="0.01" value="7.4" />
-            </div>
-
-            <div class="form-row">
-              <label for="coag_after_dredging">Days after dredging</label>
-              <input id="coag_after_dredging" name="after_dredging" type="number" step="1" value="45" />
-            </div>
-
-            <div class="form-row">
-              <label for="coag_lane">Lane</label>
-              <select id="coag_lane" name="lane">
-                <option value="1">Lane 1</option>
-                <option value="2" selected>Lane 2</option>
-                <option value="3">Lane 3</option>
-              </select>
-            </div>
-
-            <div class="form-row">
-              <label for="coag_year">Year</label>
-              <input id="coag_year" name="year" type="number" step="1" value="2025" />
-            </div>
-
-            <div class="button-stack">
-              <button type="submit" class="primary-btn">Run prediction</button>
-              <button type="button" class="secondary-btn" id="btn-coagulation-demo">Load demo values</button>
-              <button type="button" class="secondary-btn" id="btn-coagulation-live-start">Start live mode</button>
-              <button type="button" class="secondary-btn" id="btn-coagulation-live-stop">Stop live mode</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="panel">
-          <div class="status-row">
-            <span class="badge info" id="coagulation-mode-badge">Mode: manual</span>
-            <span class="badge info" id="coagulation-badge">Status: ready</span>
-          </div>
-
-          <div class="metric-grid">
-            <div class="metric">
-              <span class="metric-label">Prediction</span>
-              <strong class="metric-value" id="coagulation-prediction">–</strong>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Interpretation</span>
-              <strong class="metric-value small" id="coagulation-status">–</strong>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Last update</span>
-              <strong class="metric-value small" id="coagulation-last-update">–</strong>
-            </div>
-          </div>
-
-          <div class="mini-info">
-            FTU: <span id="live-ftu">–</span> |
-            FeCl₃: <span id="live-fecl3">–</span> |
-            Temp: <span id="live-temp">–</span> |
-            pH: <span id="live-ph">–</span> |
-            Dredging: <span id="live-dredging">–</span> |
-            Lane: <span id="live-lane">–</span> |
-            Year: <span id="live-year">–</span>
-          </div>
-
-          <div class="chart-wrap">
-            <canvas id="chart-coagulation"></canvas>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section id="screen-ozonation" class="screen">
-      <a class="back-link" href="#" data-nav="screen-treatment">← Back</a>
-
-      <div class="section-head">
-        <h3>Ozonation Models</h3>
-        <p>
-          Interactive treatment-level screens for CT, bromate, and coliform prediction.
-        </p>
-      </div>
-
-      <div class="subnav-grid">
-        <button class="subnav-card" data-nav="screen-ct">CT prediction</button>
-        <button class="subnav-card" data-nav="screen-bromate">Bromate prediction</button>
-        <button class="subnav-card" data-nav="screen-coliform">Coliform prediction</button>
-        <button class="subnav-card" data-nav="screen-ozonation-dashboard">Ozonation dashboard</button>
-      </div>
-    </section>
-
-    <section id="screen-ct" class="screen">
-      <a class="back-link" href="#" data-nav="screen-ozonation">← Back</a>
-      <div class="section-head">
-        <h3>CT Prediction</h3>
-        <p>Interactive screen for the CT prediction route inside the Treatment module.</p>
-      </div>
-
-      <div class="layout">
-        <article class="panel">
-          <form id="form-ct">
-            <div class="form-row">
-              <label for="ct_Chamber">Chamber</label>
-              <select id="ct_Chamber" name="Chamber">
-                <option value="1">Chamber 1</option>
-                <option value="2" selected>Chamber 2</option>
-                <option value="3">Chamber 3</option>
-                <option value="4">Chamber 4</option>
-              </select>
-            </div>
-
-            <div class="form-row">
-              <label for="ct_WaterTemperature">Water temperature</label>
-              <input id="ct_WaterTemperature" name="WaterTemperature" type="number" step="0.1" value="11.5" />
-            </div>
-
-            <div class="form-row">
-              <label for="ct_RFTurbidity">RF turbidity</label>
-              <input id="ct_RFTurbidity" name="RFTurbidity" type="number" step="0.01" value="3.5" />
-            </div>
-
-            <div class="form-row">
-              <label for="ct_FlowRate">Flow rate</label>
-              <input id="ct_FlowRate" name="FlowRate" type="number" step="1" value="1200" />
-            </div>
-
-            <div class="form-row">
-              <label for="ct_Ozonedosage">Ozone dosage</label>
-              <input id="ct_Ozonedosage" name="Ozonedosage" type="number" step="0.01" value="1.8" />
-            </div>
-
-            <div class="button-stack">
-              <button type="submit" class="primary-btn">Run CT prediction</button>
-              <button type="button" class="secondary-btn" id="btn-ct-demo">Load demo values</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="panel">
-          <div class="metric-grid">
-            <div class="metric">
-              <span class="metric-label">CT prediction</span>
-              <strong class="metric-value" id="ct-prediction">–</strong>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Interpretation</span>
-              <strong class="metric-value small" id="ct-status">–</strong>
-            </div>
-          </div>
-
-          <div class="chart-wrap small-chart">
-            <canvas id="chart-ct"></canvas>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section id="screen-bromate" class="screen">
-      <a class="back-link" href="#" data-nav="screen-ozonation">← Back</a>
-      <div class="section-head">
-        <h3>Bromate Prediction</h3>
-        <p>Interactive bromate prediction screen for the Treatment module.</p>
-      </div>
-
-      <div class="layout">
-        <article class="panel">
-          <form id="form-bromate">
-            <div class="form-row"><label for="br_month">Month</label><input id="br_month" name="month" type="number" value="4" /></div>
-            <div class="form-row"><label for="br_Chamber">Chamber</label><select id="br_Chamber" name="Chamber"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select></div>
-            <div class="form-row"><label for="br_WaterTemperature">Water temperature</label><input id="br_WaterTemperature" name="WaterTemperature" type="number" step="0.1" value="11.5" /></div>
-            <div class="form-row"><label for="br_RFTurbidity">RF turbidity</label><input id="br_RFTurbidity" name="RFTurbidity" type="number" step="0.01" value="3.5" /></div>
-            <div class="form-row"><label for="br_FlowRate">Flow rate</label><input id="br_FlowRate" name="FlowRate" type="number" value="1200" /></div>
-            <div class="form-row"><label for="br_Ozonedosage">Ozone dosage</label><input id="br_Ozonedosage" name="Ozonedosage" type="number" step="0.01" value="1.8" /></div>
-            <div class="form-row"><label for="br_Residencetime">Residence time</label><input id="br_Residencetime" name="Residencetime" type="number" step="0.01" value="8.4" /></div>
-            <div class="form-row"><label for="br_WaterTemperature_1">Water temperature lag 1</label><input id="br_WaterTemperature_1" name="WaterTemperature_1" type="number" step="0.1" value="11.2" /></div>
-            <div class="form-row"><label for="br_RFturbidity_1">RF turbidity lag 1</label><input id="br_RFturbidity_1" name="RFturbidity_1" type="number" step="0.01" value="3.3" /></div>
-            <div class="form-row"><label for="br_FlowRate_1">Flow rate lag 1</label><input id="br_FlowRate_1" name="FlowRate_1" type="number" value="1180" /></div>
-            <div class="form-row"><label for="br_Ozonedosage_1">Ozone dosage lag 1</label><input id="br_Ozonedosage_1" name="Ozonedosage_1" type="number" step="0.01" value="1.75" /></div>
-            <div class="form-row"><label for="br_CT_All">CT all</label><input id="br_CT_All" name="CT_All" type="number" step="0.01" value="0.55" /></div>
-
-            <div class="button-stack">
-              <button type="submit" class="primary-btn">Run bromate prediction</button>
-              <button type="button" class="secondary-btn" id="btn-bromate-demo">Load demo values</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="panel">
-          <div class="metric-grid">
-            <div class="metric">
-              <span class="metric-label">Bromate prediction</span>
-              <strong class="metric-value" id="bromate-prediction">–</strong>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Interpretation</span>
-              <strong class="metric-value small" id="bromate-status">–</strong>
-            </div>
-          </div>
-
-          <div class="chart-wrap small-chart">
-            <canvas id="chart-bromate"></canvas>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section id="screen-coliform" class="screen">
-      <a class="back-link" href="#" data-nav="screen-ozonation">← Back</a>
-      <div class="section-head">
-        <h3>Coliform Prediction</h3>
-        <p>Interactive coliform prediction screen for the Treatment module.</p>
-      </div>
-
-      <div class="layout">
-        <article class="panel">
-          <form id="form-coliform">
-            <div class="form-row"><label for="col_Chamber">Chamber</label><select id="col_Chamber" name="Chamber"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select></div>
-            <div class="form-row"><label for="col_WaterTemperature">Water temperature</label><input id="col_WaterTemperature" name="WaterTemperature" type="number" step="0.1" value="11.5" /></div>
-            <div class="form-row"><label for="col_RFTurbidity">RF turbidity</label><input id="col_RFTurbidity" name="RFTurbidity" type="number" step="0.01" value="3.5" /></div>
-            <div class="form-row"><label for="col_FlowRate">Flow rate</label><input id="col_FlowRate" name="FlowRate" type="number" value="1200" /></div>
-            <div class="form-row"><label for="col_Ozonedosage">Ozone dosage</label><input id="col_Ozonedosage" name="Ozonedosage" type="number" step="0.01" value="1.8" /></div>
-            <div class="form-row"><label for="col_RFturbidity_1">RF turbidity lag 1</label><input id="col_RFturbidity_1" name="RFturbidity_1" type="number" step="0.01" value="3.3" /></div>
-            <div class="form-row"><label for="col_CT_All">CT all</label><input id="col_CT_All" name="CT_All" type="number" step="0.01" value="0.55" /></div>
-
-            <div class="button-stack">
-              <button type="submit" class="primary-btn">Run coliform prediction</button>
-              <button type="button" class="secondary-btn" id="btn-coliform-demo">Load demo values</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="panel">
-          <div class="metric-grid">
-            <div class="metric">
-              <span class="metric-label">Coliform prediction</span>
-              <strong class="metric-value" id="coliform-prediction">–</strong>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Interpretation</span>
-              <strong class="metric-value small" id="coliform-status">–</strong>
-            </div>
-          </div>
-
-          <div class="chart-wrap small-chart">
-            <canvas id="chart-coliform"></canvas>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section id="screen-ozonation-dashboard" class="screen">
-      <a class="back-link" href="#" data-nav="screen-ozonation">← Back</a>
-      <div class="section-head">
-        <h3>Ozonation Dashboard</h3>
-        <p>Combined summary of the latest ozonation model outputs.</p>
-      </div>
-
-      <div class="two-col">
-        <article class="panel">
-          <div class="metric-grid">
-            <div class="metric"><span class="metric-label">CT</span><strong class="metric-value" id="dash-ct">–</strong></div>
-            <div class="metric"><span class="metric-label">Bromate</span><strong class="metric-value" id="dash-bromate">–</strong></div>
-            <div class="metric"><span class="metric-label">Coliform</span><strong class="metric-value" id="dash-coliform">–</strong></div>
-          </div>
-
-          <ul class="result-list" id="dash-list">
-            <li>No ozonation model has been run yet.</li>
-          </ul>
-        </article>
-
-        <article class="panel">
-          <div class="chart-wrap">
-            <canvas id="chart-ozonation-summary"></canvas>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section id="screen-hard-sensors" class="screen">
-      <a class="back-link" href="#" data-nav="screen-treatment">← Back</a>
-      <div class="section-head">
-        <h3>Hard Sensor Placeholder</h3>
-        <p>
-          This section is intentionally kept as a connected placeholder for future live hard-sensor
-          visualization and treatment-side operational messages.
-        </p>
-      </div>
-
-      <div class="two-col">
-        <article class="panel">
-          <div class="panel-head">
-            <h4>BactoSense #4</h4>
-            <button class="secondary-btn" id="btn-bactosense-latest">Load status</button>
-          </div>
-          <pre id="bactosense-latest" class="json-box">Press “Load status” to retrieve /treatment/hard-sensors/bactosense-4/latest</pre>
-        </article>
-
-        <article class="panel">
-          <div class="placeholder-box">
-            Future UI extension: hard-sensor time series, operational messages, threshold alarms,
-            and integration with external live data streams.
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <!-- DISTRIBUTION -->
-    <section id="screen-distribution" class="screen">
-      <a class="back-link" href="#" data-nav="screen-home">← Back</a>
-
-      <div class="section-head">
-        <h3>Distribution Module</h3>
-        <p>
-          Distribution-side monitoring and downstream soft-sensor structure. This screen presents
-          the implemented distribution endpoints and current placeholder logic.
-        </p>
-      </div>
-
-      <div class="two-col">
-        <article class="panel">
-          <div class="panel-head">
-            <h4>Module overview</h4>
-            <button class="secondary-btn" id="btn-distribution-overview">Load overview</button>
-          </div>
-          <pre id="distribution-overview" class="json-box">Press “Load overview” to retrieve /distribution/overview</pre>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <h4>Latest distribution output</h4>
-            <button class="secondary-btn" id="btn-distribution-latest">Load latest</button>
-          </div>
-          <pre id="distribution-latest" class="json-box">Press “Load latest” to retrieve /distribution/sose-4/latest</pre>
-        </article>
-      </div>
-    </section>
-
-    <!-- RISK -->
-    <section id="screen-risk" class="screen">
-      <a class="back-link" href="#" data-nav="screen-home">← Back</a>
-
-      <div class="section-head">
-        <h3>Risk Module</h3>
-        <p>
-          The Risk module translates predictions into operational meaning. It supports both individual
-          risk endpoints and combined ozonation risk.
-        </p>
-      </div>
-
-      <div class="subnav-grid">
-        <button class="subnav-card" data-nav="screen-risk-overview">Risk overview</button>
-        <button class="subnav-card" data-nav="screen-risk-coagulation">Coagulation risk</button>
-        <button class="subnav-card" data-nav="screen-risk-ozonation">Combined ozonation risk</button>
-      </div>
-    </section>
-
-    <section id="screen-risk-overview" class="screen">
-      <a class="back-link" href="#" data-nav="screen-risk">← Back</a>
-
-      <div class="two-col">
-        <article class="panel">
-          <div class="panel-head">
-            <h4>Risk overview</h4>
-            <button class="secondary-btn" id="btn-risk-overview">Load overview</button>
-          </div>
-          <pre id="risk-overview" class="json-box">Press “Load overview” to retrieve /risk/overview</pre>
-        </article>
-
-        <article class="panel">
-          <div class="placeholder-box">
-            This module is intended to communicate risk class, reasons, and mitigation actions based
-            on active sensor outputs across the platform.
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section id="screen-risk-coagulation" class="screen">
-      <a class="back-link" href="#" data-nav="screen-risk">← Back</a>
-
-      <div class="section-head">
-        <h3>Coagulation Risk</h3>
-        <p>Use the same input fields as the coagulation model, then translate the output into risk.</p>
-      </div>
-
-      <div class="layout">
-        <article class="panel">
-          <form id="form-risk-coagulation">
-            <div class="form-row"><label for="risk_coag_ftu_raw_water">Raw water turbidity (FTU)</label><input id="risk_coag_ftu_raw_water" name="ftu_raw_water" type="number" step="0.01" value="6.2" /></div>
-            <div class="form-row"><label for="risk_coag_fecl3_concentration">FeCl₃ concentration</label><input id="risk_coag_fecl3_concentration" name="fecl3_concentration" type="number" step="0.01" value="14.5" /></div>
-            <div class="form-row"><label for="risk_coag_temperature_raw_water">Raw water temperature</label><input id="risk_coag_temperature_raw_water" name="temperature_raw_water" type="number" step="0.1" value="12.0" /></div>
-            <div class="form-row"><label for="risk_coag_ph_raw_water">Raw water pH</label><input id="risk_coag_ph_raw_water" name="ph_raw_water" type="number" step="0.01" value="7.4" /></div>
-            <div class="form-row"><label for="risk_coag_after_dredging">Days after dredging</label><input id="risk_coag_after_dredging" name="after_dredging" type="number" step="1" value="45" /></div>
-            <div class="form-row"><label for="risk_coag_lane">Lane</label><select id="risk_coag_lane" name="lane"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></div>
-            <div class="form-row"><label for="risk_coag_year">Year</label><input id="risk_coag_year" name="year" type="number" step="1" value="2025" /></div>
-
-            <div class="button-stack">
-              <button type="submit" class="primary-btn">Run coagulation risk</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="panel">
-          <pre id="risk-coagulation-output" class="json-box">No risk result yet.</pre>
-        </article>
-      </div>
-    </section>
-
-    <section id="screen-risk-ozonation" class="screen">
-      <a class="back-link" href="#" data-nav="screen-risk">← Back</a>
-
-      <div class="section-head">
-        <h3>Combined Ozonation Risk</h3>
-        <p>
-          Submit CT, bromate, and coliform inputs together to retrieve the combined ozonation risk
-          response from the Risk module.
-        </p>
-      </div>
-
-      <div class="layout">
-        <article class="panel">
-          <form id="form-risk-ozonation">
-            <h4>CT</h4>
-            <div class="form-row"><label>Chamber</label><input name="ct.Chamber" type="number" value="2" /></div>
-            <div class="form-row"><label>WaterTemperature</label><input name="ct.WaterTemperature" type="number" step="0.1" value="11.5" /></div>
-            <div class="form-row"><label>RFTurbidity</label><input name="ct.RFTurbidity" type="number" step="0.01" value="3.5" /></div>
-            <div class="form-row"><label>FlowRate</label><input name="ct.FlowRate" type="number" value="1200" /></div>
-            <div class="form-row"><label>Ozonedosage</label><input name="ct.Ozonedosage" type="number" step="0.01" value="1.8" /></div>
-
-            <h4>Bromate</h4>
-            <div class="form-row"><label>month</label><input name="bromate.month" type="number" value="4" /></div>
-            <div class="form-row"><label>Chamber</label><input name="bromate.Chamber" type="number" value="2" /></div>
-            <div class="form-row"><label>WaterTemperature</label><input name="bromate.WaterTemperature" type="number" step="0.1" value="11.5" /></div>
-            <div class="form-row"><label>RFTurbidity</label><input name="bromate.RFTurbidity" type="number" step="0.01" value="3.5" /></div>
-            <div class="form-row"><label>FlowRate</label><input name="bromate.FlowRate" type="number" value="1200" /></div>
-            <div class="form-row"><label>Ozonedosage</label><input name="bromate.Ozonedosage" type="number" step="0.01" value="1.8" /></div>
-            <div class="form-row"><label>Residencetime</label><input name="bromate.Residencetime" type="number" step="0.01" value="8.4" /></div>
-            <div class="form-row"><label>WaterTemperature_1</label><input name="bromate.WaterTemperature_1" type="number" step="0.1" value="11.2" /></div>
-            <div class="form-row"><label>RFturbidity_1</label><input name="bromate.RFturbidity_1" type="number" step="0.01" value="3.3" /></div>
-            <div class="form-row"><label>FlowRate_1</label><input name="bromate.FlowRate_1" type="number" value="1180" /></div>
-            <div class="form-row"><label>Ozonedosage_1</label><input name="bromate.Ozonedosage_1" type="number" step="0.01" value="1.75" /></div>
-            <div class="form-row"><label>CT_All</label><input name="bromate.CT_All" type="number" step="0.01" value="0.55" /></div>
-
-            <h4>Coliform</h4>
-            <div class="form-row"><label>Chamber</label><input name="coliform.Chamber" type="number" value="2" /></div>
-            <div class="form-row"><label>WaterTemperature</label><input name="coliform.WaterTemperature" type="number" step="0.1" value="11.5" /></div>
-            <div class="form-row"><label>RFTurbidity</label><input name="coliform.RFTurbidity" type="number" step="0.01" value="3.5" /></div>
-            <div class="form-row"><label>FlowRate</label><input name="coliform.FlowRate" type="number" value="1200" /></div>
-            <div class="form-row"><label>Ozonedosage</label><input name="coliform.Ozonedosage" type="number" step="0.01" value="1.8" /></div>
-            <div class="form-row"><label>RFturbidity_1</label><input name="coliform.RFturbidity_1" type="number" step="0.01" value="3.3" /></div>
-            <div class="form-row"><label>CT_All</label><input name="coliform.CT_All" type="number" step="0.01" value="0.55" /></div>
-
-            <div class="button-stack">
-              <button type="submit" class="primary-btn">Run combined ozonation risk</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="panel">
-          <pre id="risk-ozonation-output" class="json-box">No combined risk result yet.</pre>
-        </article>
-      </div>
-    </section>
-  </main>
-</body>
-</html> -->
