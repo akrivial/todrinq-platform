@@ -226,9 +226,9 @@ The platform supports:
 ## 👩‍💻 Author
 
 **Akrivi Alexandraki**  
-Engineering Doctorate Candidate – Delft University of Technology (TU Delft)  
-Faculty of Civil Engineering, Sanitary Engineering
-Tel: +30 694 203 8834 | +31 622 241 664
+- Engineering Doctorate Candidate – Delft University of Technology (TU Delft)  
+- Faculty of Civil Engineering, Sanitary Engineering
+- Tel: +30 694 203 8834 | +31 622 241 664
 
 ---
 
