@@ -31,25 +31,25 @@ Each soft sensor is **automatically connected to its corresponding risk assessme
 
 Prediction → Risk Classification → Operator Guidance
 
-✔ Works in:
+Works in:
 - manual mode  
 - live streaming mode (mock PIMS → real PIMS-ready)  
 
-✔ The **Treatment module remains model-focused**  
-✔ The **Risk module displays only risk-relevant outputs**
+The **Treatment module remains model-focused**  
+The **Risk module displays only risk-relevant outputs**
 
 ---
 
 ## 🧩 Current Implemented Soft Sensors
 
-### 🔹 Source / Intake
+### Source / Intake
 
 * **SoSe #9** – Early prediction of turbidity in DWTP inlet  
   Predicts raw water turbidity up to 3 hours ahead.
 
 ---
 
-### 🔹 Treatment – Coagulation
+### Treatment – Coagulation
 
 * **SoSe #8** – Estimation of turbidity of the coagulation-flocculation process  
   Predicts turbidity after coagulation.
@@ -59,7 +59,7 @@ Prediction → Risk Classification → Operator Guidance
 
 ---
 
-### 🔹 Treatment – Ozonation
+### Treatment – Ozonation
 
 * **SoSe #10** – Prediction of the ozonation exposure (CT)  
   Estimates disinfection capacity.
@@ -72,14 +72,14 @@ Prediction → Risk Classification → Operator Guidance
 
 ---
 
-### 🔹 Distribution
+### Distribution
 
 * **SoSe #11** – Aeromonas prediction model  
   Supports biological instability assessment (under evaluation).
 
 ---
 
-### 🔹 Hard Sensor Placeholder
+### Hard Sensor Placeholder
 
 * **BactoSense #4** – Placeholder for future operational integration.
 
