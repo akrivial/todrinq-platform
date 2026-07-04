@@ -1,0 +1,217 @@
+[
+  {
+    "id": "urn:ngsi-ld:WaterQualityObserved:CoagulationInfluent:Leiduin:SoSe9Input",
+    "type": "WaterQualityObserved",
+    "dateObserved": {
+      "type": "Property",
+      "value": "2026-05-04T12:00:00Z"
+    },
+    "month": {
+      "type": "Property",
+      "value": 5
+    },
+    "turbidity": {
+      "type": "Property",
+      "value": 0.9,
+      "unitCode": "FTU",
+      "observedAt": "2026-05-04T12:00:00Z"
+    },
+    "temperature": {
+      "type": "Property",
+      "value": 11.7,
+      "unitCode": "CEL",
+      "observedAt": "2026-05-04T12:00:00Z"
+    },
+    "turbidityLag24h": {
+      "type": "Property",
+      "value": [
+        1.04,
+        2.14,
+        2.09,
+        1.3,
+        2.39,
+        2.38,
+        1.45,
+        0.81,
+        2.18,
+        0.93,
+        2.34,
+        1.52,
+        1.84,
+        1.11,
+        2.49,
+        1.17,
+        2.28,
+        1.47,
+        2.44,
+        2.16,
+        1.46,
+        1.47,
+        1.2,
+        0.9
+      ],
+      "unitCode": "FTU"
+    },
+    "temperatureLag24h": {
+      "type": "Property",
+      "value": [
+        12.71,
+        12.06,
+        11.24,
+        14.78,
+        15.22,
+        13.56,
+        9.78,
+        8.29,
+        13.55,
+        12.13,
+        9.05,
+        8.27,
+        15.18,
+        8.21,
+        9.98,
+        10.91,
+        10.3,
+        15.22,
+        8.84,
+        13.94,
+        10.09,
+        11.97,
+        8.81,
+        11.7
+      ],
+      "unitCode": "CEL"
+    },
+    "givesInput": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:DrinkingWaterSimulation:TurbidityInletSoftSensor:Leiduin:SoSe9"
+    },
+    "@context": [
+      "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+  },
+  {
+    "id": "urn:ngsi-ld:WaterQuantityObserved:Hagesteinboven:SoSe9Input",
+    "type": "WaterQuantityObserved",
+    "dateObserved": {
+      "type": "Property",
+      "value": "2026-05-04T12:00:00Z"
+    },
+    "flow": {
+      "type": "Property",
+      "value": 1131.0,
+      "unitCode": "Q37",
+      "observedAt": "2026-05-04T12:00:00Z"
+    },
+    "dischargeLag24h": {
+      "type": "Property",
+      "value": [
+        960.9,
+        941.0,
+        1033.4,
+        878.1,
+        1116.6,
+        1009.3,
+        890.5,
+        928.7,
+        1090.7,
+        911.3,
+        896.3,
+        853.9,
+        994.1,
+        937.8,
+        1058.2,
+        877.0,
+        1125.1,
+        1033.0,
+        1012.9,
+        1163.1,
+        1097.0,
+        870.5,
+        1158.1,
+        1131.0
+      ],
+      "unitCode": "Q37"
+    },
+    "givesInput": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:DrinkingWaterSimulation:TurbidityInletSoftSensor:Leiduin:SoSe9"
+    },
+    "@context": [
+      "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+  },
+  {
+    "id": "urn:ngsi-ld:DrinkingWaterSimulation:TurbidityInletSoftSensor:Leiduin:SoSe9",
+    "type": "TurbidityInletSoftSensor",
+    "name": {
+      "type": "Property",
+      "value": "SoSe #9 - Turbidity Inlet Soft Sensor"
+    },
+    "module": {
+      "type": "Property",
+      "value": "Source / Intake"
+    },
+    "forecastHorizon": {
+      "type": "Property",
+      "value": 3,
+      "unitCode": "HUR"
+    },
+    "forecastResolution": {
+      "type": "Property",
+      "value": 1,
+      "unitCode": "HUR"
+    },
+    "numberOfInputFeatures": {
+      "type": "Property",
+      "value": 73
+    },
+    "hasInput": {
+      "type": "Relationship",
+      "object": [
+        "urn:ngsi-ld:WaterQualityObserved:CoagulationInfluent:Leiduin:SoSe9Input",
+        "urn:ngsi-ld:WaterQuantityObserved:Hagesteinboven:SoSe9Input"
+      ]
+    },
+    "givesPrediction": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:WaterQualityObserved:CoagulationInfluent:Leiduin:SoSe9Output"
+    },
+    "@context": [
+      "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+  },
+  {
+    "id": "urn:ngsi-ld:WaterQualityObserved:CoagulationInfluent:Leiduin:SoSe9Output",
+    "type": "WaterQualityObserved",
+    "dateObserved": {
+      "type": "Property",
+      "value": "2026-05-04T12:00:00Z"
+    },
+    "turbidityPlus1h": {
+      "type": "Property",
+      "value": 1.3,
+      "unitCode": "FTU",
+      "observedAt": "2026-05-04T13:00:00Z"
+    },
+    "turbidityPlus2h": {
+      "type": "Property",
+      "value": 1.67,
+      "unitCode": "FTU",
+      "observedAt": "2026-05-04T14:00:00Z"
+    },
+    "turbidityPlus3h": {
+      "type": "Property",
+      "value": 2.06,
+      "unitCode": "FTU",
+      "observedAt": "2026-05-04T15:00:00Z"
+    },
+    "generatedBy": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:DrinkingWaterSimulation:TurbidityInletSoftSensor:Leiduin:SoSe9"
+    },
+    "@context": [
+      "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+  }
+]

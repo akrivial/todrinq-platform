@@ -47,7 +47,7 @@ supervised_model = keras.models.load_model(
         }
     )
 
-def get_dosage_suggestion(online_data_dict, supervised_model):
+def get_dosage_suggestion(online_data_dict, supervised_model,flow_coag,action_map):
     """
     Takes a dictionary of sensor readings, runs it through the RL environment,
     and returns the recommended FeCl3 dosage.
@@ -72,9 +72,11 @@ def get_dosage_suggestion(online_data_dict, supervised_model):
     best_action_idx = np.argmax(q_values[0])
 
     # Map index to actual dosage
-    recommended_dosage = action_map[best_action_idx]
+    recommended_dosage_mmol = action_map[best_action_idx]
 
-    return recommended_dosage
+    recommended_dosage_ml = recommended_dosage_mmol * flow_coag /192
+
+    return recommended_dosage_ml
 
 
 example_sensor_input = {
@@ -86,6 +88,6 @@ example_sensor_input = {
     'lane': 1,
     'year': 2026,
 }
-
-suggestion = get_dosage_suggestion(example_sensor_input, supervised_model)
-print(f"🚀 Recommended Dosage for current conditions: {suggestion} mg/L")
+flow_coag = {f"flow_coagulation {example_sensor_input['lane']}": 1000}
+suggestion = get_dosage_suggestion(example_sensor_input, supervised_model,flow_coag,action_map)
+print(f"🚀 Recommended Dosage for current conditions: {suggestion:.2f} mg/L")

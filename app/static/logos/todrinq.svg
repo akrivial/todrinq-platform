@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 64" fill="none">
+  <defs>
+    <linearGradient id="td-drop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#38c2e8"/>
+      <stop offset="100%" stop-color="#0072b1"/>
+    </linearGradient>
+  </defs>
+  <!-- Clean teardrop -->
+  <path d="M28 6 C28 6 10 26 10 38 C10 50 18.3 58 28 58 C37.7 58 46 50 46 38 C46 26 28 6 28 6Z" fill="url(#td-drop)"/>
+  <!-- Inner ring cutout -->
+  <circle cx="28" cy="38" r="9" fill="white" opacity="0.25"/>
+  <circle cx="28" cy="38" r="5" fill="url(#td-drop)"/>
+  <!-- Stem of p-shape -->
+  <rect x="20" y="24" width="5" height="20" rx="2.5" fill="white" opacity="0.9"/>
+  <!-- Text -->
+  <text x="56" y="30" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="800" fill="#0072b1" letter-spacing="-0.5">To</text>
+  <text x="80" y="30" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="800" fill="#0098d4">DrinQ</text>
+  <text x="56" y="46" font-family="Inter,Arial,sans-serif" font-size="9.5" font-weight="500" fill="#6a9fbe" letter-spacing="1.2">DECISION SUPPORT</text>
+  <text x="56" y="58" font-family="Inter,Arial,sans-serif" font-size="9.5" font-weight="500" fill="#6a9fbe" letter-spacing="1.2">PLATFORM</text>
+</svg>

@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # - "GB_test_5_v2_42.pkl"
 # - "GB_test_5_v2_42.joblib"
 # "GB_test_5_v2_42.pkl"
-CT_MODEL_FILENAME = "GB_test_5_v2_42.joblib"
+CT_MODEL_FILENAME = "gb_model_v3_36.pkl"
 
 # Keep these unless your supervisor sends new scaler files too.
 CT_FEATURE_SCALER_FILENAME = "feature_scaler.pkl"
@@ -57,6 +57,24 @@ def _load_joblib(path: Path):
     return joblib.load(path)
 
 
+def _load_predictor(path: Path):
+    model = _load_joblib(path)
+    if not hasattr(model, "predict"):
+        raise TypeError(
+            f"{path.name} did not contain a predictor object. "
+            f"Loaded type: {type(model).__name__}. "
+            "TODO(Akrivi/Greg/Alex): provide the validated SoSe #10.1 model artifact."
+        )
+    return model
+
+
+def _safe_load_predictor(path: Path):
+    try:
+        return _load_predictor(path), None
+    except Exception as e:
+        return None, repr(e)
+
+
 def _safe_load_ct():
     """Load CT model safely.
 
@@ -78,6 +96,8 @@ def _safe_load_ct():
 # -------------------------------------------------------------------
 # CT is loaded safely because the current artifact may fail.
 CT_MODEL, CT_LOAD_ERROR = _safe_load_ct()
+BROMATE_MODEL, BROMATE_LOAD_ERROR = _safe_load_predictor(BROMATE_DIR / BROMATE_MODEL_FILENAME)
+COLIFORM_MODEL, COLIFORM_LOAD_ERROR = _safe_load_predictor(COLIFORM_DIR / COLIFORM_MODEL_FILENAME)
 
 MODELS = {
     "CT": {
@@ -88,7 +108,8 @@ MODELS = {
         "features": ["Chamber", "WaterTemperature", "RFTurbidity", "FlowRate", "Ozonedosage"],
     },
     "Bromate": {
-        "model": _load_joblib(BROMATE_DIR / BROMATE_MODEL_FILENAME),
+        "model": BROMATE_MODEL,
+        "load_error": BROMATE_LOAD_ERROR,
         "f_scaler": _load_joblib(BROMATE_DIR / BROMATE_FEATURE_SCALER_FILENAME),
         "t_scaler": _load_joblib(BROMATE_DIR / BROMATE_TARGET_SCALER_FILENAME),
         "features": [
@@ -107,7 +128,8 @@ MODELS = {
         ],
     },
     "Coliform": {
-        "model": _load_joblib(COLIFORM_DIR / COLIFORM_MODEL_FILENAME),
+        "model": COLIFORM_MODEL,
+        "load_error": COLIFORM_LOAD_ERROR,
         "f_scaler": _load_joblib(COLIFORM_DIR / COLIFORM_FEATURE_SCALER_FILENAME),
         "t_scaler": _load_joblib(COLIFORM_DIR / COLIFORM_TARGET_SCALER_FILENAME),
         "features": [

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
+import json
 import logging
 import traceback
 import joblib
@@ -11,6 +12,36 @@ log = logging.getLogger(__name__)
 # Base models directory
 BASE_DIR = Path(__file__).resolve().parent
 MODELS_DIR = BASE_DIR / "models"
+
+# ----------------------------------------------------
+# SoSe #9 — Source turbidity (3-hour forecast)
+# ----------------------------------------------------
+SOSE9_DIR = MODELS_DIR / "sose9"
+
+sose9_model: Optional[Any] = None
+sose9_feature_cols: Optional[List[str]] = None
+
+
+sose9_scaler_dict: Optional[dict] = None
+
+
+def _load_sose9() -> None:
+    global sose9_model, sose9_feature_cols, sose9_scaler_dict
+
+    model_path   = SOSE9_DIR / "xgb_sensor_hagdis_month_24_3.joblib"
+    features_path = SOSE9_DIR / "features.json"
+    scaler_path  = SOSE9_DIR / "scaler_dict.pkl"
+
+    sose9_model       = _load_joblib(model_path,  "SoSe #9 model")
+    sose9_scaler_dict = _load_joblib(scaler_path, "SoSe #9 scaler_dict")
+
+    if features_path.exists():
+        with open(features_path) as f:
+            sose9_feature_cols = json.load(f)
+        print(f">>> LOADED SoSe #9 features: {len(sose9_feature_cols)} features")
+    else:
+        print(f">>> MISSING SoSe #9 features.json: {features_path}")
+
 
 # ----------------------------------------------------
 # Ozonation model directories
@@ -150,6 +181,7 @@ def _load_coag() -> Optional[Any]:
 
 coag_model = _load_coag()
 load_ozonation_models()
+_load_sose9()
 
 
 def status() -> Dict[str, bool]:
@@ -189,6 +221,9 @@ __all__ = [
     "coliform_feature_scaler",
     "coliform_target_scaler",
     "coag_model",
+    "sose9_model",
+    "sose9_feature_cols",
+    "sose9_scaler_dict",
     "load_ozonation_models",
     "status",
     "ready",

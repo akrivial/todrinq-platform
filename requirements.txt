@@ -16,5 +16,8 @@ matplotlib==3.8.4
 xgboost==2.0.3
 tensorflow==2.16.1
 keras
+tf-keras==2.16.0
 gymnasium
 typing-extensions==4.9.0
+
+tensorflow-probability==0.24.0

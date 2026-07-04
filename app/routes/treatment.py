@@ -1,12 +1,17 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
-import random
+from datetime import datetime, timezone
 
 from app.routes.predict import (
     CoagulationInput,
     run_coagulation_prediction,
 )
-from app.routes.mock_pims import generate_coagulation_data
+from app.routes.mock_pims import (
+    generate_coagulation_data,
+    generate_ct_data,
+    generate_bromate_data,
+    generate_coliform_data,
+)
 from app.services.ozonation_predictions import (
     predict_ct,
     predict_bromate,
@@ -32,10 +37,11 @@ SOSE_8 = {
 
 RL_5 = {
     "name": "RL #5",
-    "display_name": "Treatment - RL #5 - Optimal FeCl3 dosage",
+    "display_name": "Treatment - RL #5 - FeCl3 dosage advisory",
     "full_name": "RL Optimal FeCl3 dosage for coagulation process",
-    "type": "soft sensor",
+    "type": "reinforcement-learning advisory",
     "process": "Coagulation",
+    "validation_status": "under validation",
 }
 
 SOSE_10 = {
@@ -68,6 +74,35 @@ BACTOSENSE_4 = {
     "type": "hard sensor",
     "process": "Microbiological Monitoring",
 }
+
+CT_FEATURES = ["Chamber", "WaterTemperature", "RFTurbidity", "FlowRate", "Ozonedosage"]
+BROMATE_FEATURES = [
+    "month",
+    "Chamber",
+    "WaterTemperature",
+    "RFTurbidity",
+    "FlowRate",
+    "Ozonedosage",
+    "Residencetime",
+    "WaterTemperature_1",
+    "RFturbidity_1",
+    "FlowRate_1",
+    "Ozonedosage_1",
+    "CT_All",
+]
+COLIFORM_FEATURES = [
+    "Chamber",
+    "WaterTemperature",
+    "RFTurbidity",
+    "FlowRate",
+    "Ozonedosage",
+    "RFturbidity_1",
+    "CT_All",
+]
+
+
+def payload_values(payload: BaseModel, features: list[str]) -> list:
+    return [getattr(payload, field) for field in features]
 
 
 # --------------------------------------------------
@@ -186,8 +221,8 @@ def coagulation_latest():
     try:
         body = CoagulationInput(**data)
         pred = unwrap(run_coagulation_prediction(body))
-    except Exception:
-        pred = round(random.uniform(2, 8), 2)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Coagulation model unavailable: {str(e)}")
 
     return {
         "display_name": SOSE_8["display_name"],
@@ -203,55 +238,124 @@ def coagulation_latest():
 def rl_latest():
     return {
         "display_name": RL_5["display_name"],
-        "recommended_dose": round(random.uniform(5, 10), 2),
+        "status": "under validation",
+        "recommended_dose": None,
+        "unit": "mg/L",
+        "included_in_risk_aggregation": False,
+        "message": "Use POST /treatment/coagulation/rl with current process input. No fabricated latest RL recommendation is returned.",
+        "validation_todos": [
+            "TODO(Greg): verify ACTION_MAP, unit conversion, and model-output interpretation before final release.",
+        ],
     }
 
 
 # --------------------------------------------------
 # CT
 # --------------------------------------------------
+@router.get("/ozonation/ct/latest", summary="Treatment SoSe #10 CT latest (PIMS live)")
+def ct_latest():
+    data = generate_ct_data()
+    input_data = {k: v for k, v in data.items() if k != "timestamp"}
+    try:
+        body = CTInput(**input_data)
+        pred = unwrap(predict_ct([payload_values(body, CT_FEATURES)]))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"CT model unavailable or scaling requires validation: {str(e)}")
+    return {
+        "display_name": SOSE_10["display_name"],
+        "input_data": input_data,
+        "prediction": pred,
+        "unit": "mg*min/L",
+        "timestamp": data["timestamp"],
+        "resolution": "1h",
+        "validation_warning": "TODO(Akrivi/Greg/Alex): validate CT scaling and expected reference around 1.2 before operational display.",
+    }
+
+
 @router.post("/ozonation/ct", summary="Treatment SoSe #10 CT")
 def ct(payload: CTInput):
     try:
-        pred = unwrap(predict_ct([[*payload.model_dump().values()]]))
-    except Exception:
-        pred = round(random.uniform(5, 20), 2)
+        pred = unwrap(predict_ct([payload_values(payload, CT_FEATURES)]))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"CT model unavailable or scaling requires validation: {str(e)}")
 
     return {
         "display_name": SOSE_10["display_name"],
         "prediction": pred,
+        "unit": "mg*min/L",
+        "validation_warning": "TODO(Akrivi/Greg/Alex): validate CT scaling and expected reference around 1.2 before operational display.",
     }
 
 
 # --------------------------------------------------
 # BROMATE
 # --------------------------------------------------
+@router.get("/ozonation/bromate/latest", summary="Treatment SoSe #10.1 bromate latest (PIMS live)")
+def bromate_latest():
+    data = generate_bromate_data()
+    input_data = {k: v for k, v in data.items() if k != "timestamp"}
+    try:
+        body = BromateInput(**input_data)
+        pred = unwrap(predict_bromate([payload_values(body, BROMATE_FEATURES)]))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Bromate model unavailable: {str(e)}")
+    return {
+        "display_name": SOSE_101["display_name"],
+        "input_data": input_data,
+        "prediction": pred,
+        "unit": "ug/L",
+        "timestamp": data["timestamp"],
+        "resolution": "1h",
+    }
+
+
 @router.post("/ozonation/bromate", summary="Treatment SoSe #10.1 bromate")
 def bromate(payload: BromateInput):
     try:
-        pred = unwrap(predict_bromate([[*payload.model_dump().values()]]))
-    except Exception:
-        pred = round(random.uniform(1, 10), 2)
+        pred = unwrap(predict_bromate([payload_values(payload, BROMATE_FEATURES)]))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Bromate model unavailable: {str(e)}")
 
     return {
         "display_name": SOSE_101["display_name"],
         "prediction": pred,
+        "unit": "ug/L",
     }
 
 
 # --------------------------------------------------
 # COLIFORM
 # --------------------------------------------------
+@router.get("/ozonation/coliform/latest", summary="Treatment SoSe #10.2 coliform latest (PIMS live)")
+def coliform_latest():
+    data = generate_coliform_data()
+    input_data = {k: v for k, v in data.items() if k != "timestamp"}
+    try:
+        body = ColiformInput(**input_data)
+        pred = unwrap(predict_coliform([payload_values(body, COLIFORM_FEATURES)]))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Coliform/microbial-removal model unavailable: {str(e)}")
+    return {
+        "display_name": SOSE_102["display_name"],
+        "input_data": input_data,
+        "prediction": pred,
+        "unit": "dimensionless log removal",
+        "timestamp": data["timestamp"],
+        "resolution": "1h",
+    }
+
+
 @router.post("/ozonation/coliform", summary="Treatment SoSe #10.2 coliform")
 def coliform(payload: ColiformInput):
     try:
-        pred = unwrap(predict_coliform([[*payload.model_dump().values()]]))
-    except Exception:
-        pred = round(random.uniform(0.5, 5), 2)
+        pred = unwrap(predict_coliform([payload_values(payload, COLIFORM_FEATURES)]))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Coliform/microbial-removal model unavailable: {str(e)}")
 
     return {
         "display_name": SOSE_102["display_name"],
         "prediction": pred,
+        "unit": "dimensionless log removal",
     }
 
 
@@ -262,6 +366,18 @@ def coliform(payload: ColiformInput):
 def bactosense():
     return {
         "display_name": BACTOSENSE_4["display_name"],
-        "inactive_cells": random.randint(1000, 3000),
-        "status": "demo",
+        "status": "awaiting_data",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "sensor_type": "live hard-sensor connection placeholder",
+        "measurements": {
+            "influent_ozone": None,
+            "effluent_ozone": None,
+            "influent_uv": None,
+            "effluent_uv": None,
+            "influent_bactosense_intact_cell_number": None,
+            "effluent_bactosense_intact_cell_number": None,
+        },
+        "timeseries": [],
+        "message": "BactoSense live input is not connected yet; no operational values are fabricated.",
+        "todo": "TODO(Akrivi/Greg/Alex): confirm BactoSense/PIMS tag names, units, and timestamps for influent/effluent ozone, UV, and intact cell number.",
     }

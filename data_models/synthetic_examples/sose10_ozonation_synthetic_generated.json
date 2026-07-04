@@ -1,0 +1,218 @@
+[
+  {
+    "id": "urn:ngsi-ld:WaterQualityObserved:OzonationInlet:Leiduin:SoSe10Input",
+    "type": "WaterQualityObserved",
+    "name": {
+      "type": "Property",
+      "value": "Ozonation Inlet Water Quality - Leiduin"
+    },
+    "description": {
+      "type": "Property",
+      "value": "Synthetic influent water quality and operational parameters used as input for the ozonation soft sensor models."
+    },
+    "dateObserved": {
+      "type": "Property",
+      "value": "2026-04-29T12:00:00Z"
+    },
+    "month": {
+      "type": "Property",
+      "value": 4
+    },
+    "residenceTime": {
+      "type": "Property",
+      "value": 18.0,
+      "unitCode": "MIN",
+      "observedAt": "2026-04-29T12:00:00Z"
+    },
+    "flow": {
+      "type": "Property",
+      "value": 1000.0,
+      "unitCode": "Q37",
+      "observedAt": "2026-04-29T12:00:00Z"
+    },
+    "temperature": {
+      "type": "Property",
+      "value": 10.5,
+      "unitCode": "CEL",
+      "observedAt": "2026-04-29T12:00:00Z"
+    },
+    "turbidity": {
+      "type": "Property",
+      "value": 1.2,
+      "unitCode": "NTU",
+      "observedAt": "2026-04-29T12:00:00Z"
+    },
+    "turbidityLag1h": {
+      "type": "Property",
+      "value": 1.1,
+      "unitCode": "NTU",
+      "observedAt": "2026-04-29T11:00:00Z"
+    },
+    "flowLag1h": {
+      "type": "Property",
+      "value": 980.0,
+      "unitCode": "Q37",
+      "observedAt": "2026-04-29T11:00:00Z"
+    },
+    "temperatureLag1h": {
+      "type": "Property",
+      "value": 10.3,
+      "unitCode": "CEL",
+      "observedAt": "2026-04-29T11:00:00Z"
+    },
+    "ozoneDosageLag1h": {
+      "type": "Property",
+      "value": 2.1,
+      "unitCode": "P99",
+      "substance": {
+        "type": "Property",
+        "value": "O3"
+      },
+      "observedAt": "2026-04-29T11:00:00Z"
+    },
+    "rawInfluent": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:DrinkingWaterTreatment:OzonationProcess:Leiduin"
+    },
+    "givesInput": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:DrinkingWaterSimulation:OzonationSoftSensor:Leiduin:SoSe10"
+    },
+    "@context": [
+      "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+  },
+  {
+    "id": "urn:ngsi-ld:DrinkingWaterTreatment:OzonationProcess:Leiduin",
+    "type": "OzonationProcess",
+    "name": {
+      "type": "Property",
+      "value": "Ozonation Process - Leiduin"
+    },
+    "description": {
+      "type": "Property",
+      "value": "Synthetic ozonation treatment process providing operational input to the ozonation soft sensor suite."
+    },
+    "dateObserved": {
+      "type": "Property",
+      "value": "2026-04-29T12:00:00Z"
+    },
+    "chemicalDosage": {
+      "type": "Property",
+      "value": 2.2,
+      "unitCode": "P99",
+      "substance": {
+        "type": "Property",
+        "value": "O3"
+      },
+      "observedAt": "2026-04-29T12:00:00Z"
+    },
+    "laneOperate": {
+      "type": "Property",
+      "value": [
+        { "lane": 1, "compartmentOperate": "1.1 - 1.9" },
+        { "lane": 2, "compartmentOperate": "2.1 - 2.9" },
+        { "lane": 3, "compartmentOperate": "3.1 - 3.9" },
+        { "lane": 4, "compartmentOperate": "4.1 - 4.9" }
+      ]
+    },
+    "givesInput": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:DrinkingWaterSimulation:OzonationSoftSensor:Leiduin:SoSe10"
+    },
+    "isSimulatedBy": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:DrinkingWaterSimulation:OzonationSoftSensor:Leiduin:SoSe10"
+    },
+    "@context": [
+      "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+  },
+  {
+    "id": "urn:ngsi-ld:DrinkingWaterSimulation:OzonationSoftSensor:Leiduin:SoSe10",
+    "type": "OzonationSoftSensor",
+    "name": {
+      "type": "Property",
+      "value": "SoSe #10 - Ozonation Soft Sensor Suite"
+    },
+    "description": {
+      "type": "Property",
+      "value": "Integrated ozonation soft sensor suite including CT ozone exposure, bromate formation, and coliform log removal."
+    },
+    "module": {
+      "type": "Property",
+      "value": "Treatment"
+    },
+    "process": {
+      "type": "Property",
+      "value": "Ozonation"
+    },
+    "modelComponents": {
+      "type": "Property",
+      "value": [
+        "SoSe #10 - CT ozone exposure model",
+        "SoSe #10.1 - Bromate formation model",
+        "SoSe #10.2 - Coliform log removal model"
+      ]
+    },
+    "hasInput": {
+      "type": "Relationship",
+      "object": [
+        "urn:ngsi-ld:WaterQualityObserved:OzonationInlet:Leiduin:SoSe10Input",
+        "urn:ngsi-ld:DrinkingWaterTreatment:OzonationProcess:Leiduin"
+      ]
+    },
+    "treatedEffluentWater": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:DrinkingWaterSimulation:OzonationEffluent:Leiduin:SoSe10Output"
+    },
+    "@context": [
+      "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+  },
+  {
+    "id": "urn:ngsi-ld:DrinkingWaterSimulation:OzonationEffluent:Leiduin:SoSe10Output",
+    "type": "OzonationEffluent",
+    "name": {
+      "type": "Property",
+      "value": "Ozonation Effluent - Leiduin"
+    },
+    "description": {
+      "type": "Property",
+      "value": "Synthetic predicted treated effluent water quality after ozonation."
+    },
+    "dateObserved": {
+      "type": "Property",
+      "value": "2026-04-29T12:00:00Z"
+    },
+    "chemicalConcentration": {
+      "type": "Property",
+      "value": 5.5,
+      "unitCode": "P99",
+      "substance": {
+        "type": "Property",
+        "value": "BrO3-"
+      },
+      "observedAt": "2026-04-29T12:00:00Z"
+    },
+    "ozoneExposure": {
+      "type": "Property",
+      "value": 35.0,
+      "unitCode": "F34",
+      "observedAt": "2026-04-29T12:00:00Z"
+    },
+    "logColiformRemoval": {
+      "type": "Property",
+      "value": 3.2,
+      "unitCode": "F35",
+      "observedAt": "2026-04-29T12:00:00Z"
+    },
+    "generatedBy": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:DrinkingWaterSimulation:OzonationSoftSensor:Leiduin:SoSe10"
+    },
+    "@context": [
+      "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+  }
+]

@@ -15,7 +15,7 @@ import random
 import os
 import tensorflow as tf
 import keras
-from keras import layers
+from keras import layers, models, initializers
 import matplotlib.pyplot as plt
 from collections import deque
 import gymnasium as gym
@@ -31,18 +31,52 @@ class DQNAgent:
         self.action_dim = action_dim
         self.gamma = 0.99
         self.model = self._build_model()
+        self.target_model = self._build_model()
+        self.update_target_model()
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
         self.loss_fn = tf.keras.losses.MeanSquaredError()
 
+        self._predict_batch_compiled = tf.function(lambda x: self.model(x, training=False))
+        self._train_step_compiled = tf.function(self._train_step)
+
+    def update_target_model(self):
+        self.target_model.set_weights(self.model.get_weights())
+
     def _build_model(self):
-        # This replaces your create_q_model function
         model = tf.keras.Sequential([
             layers.Input(shape=(self.state_dim,)),
-            layers.Dense(64, activation='relu'),
-            layers.Dense(64, activation='relu'),
+            layers.Dense(144, activation='relu'),
+            layers.Dense(144, activation='relu'),
+            layers.Dense(144, activation='relu'),
+            layers.Dense(144, activation='relu'),
+            layers.Dense(144, activation='relu'),
+            layers.Dense(144, activation='relu'),
+            layers.Dense(144, activation='relu'),
+            layers.Dense(144, activation='relu'),
+            layers.Dense(144, activation='relu'),
+            layers.Dense(144, activation='relu'),
             layers.Dense(self.action_dim, activation='linear')
         ])
         return model
+
+
+    def get_action_batch(self, states, epsilon):
+        states_tensor = tf.convert_to_tensor(states, dtype=tf.float32)
+        q_values = self._predict_batch_compiled(states_tensor)
+
+        batch_size = tf.shape(states_tensor)[0]
+        greedy_actions = tf.argmax(q_values, axis=1)
+
+        random_actions = tf.random.uniform(
+            shape=[batch_size],
+            minval=0,
+            maxval=self.action_dim,
+            dtype=tf.int64
+        )
+        random_mask = tf.random.uniform(shape=[batch_size]) < epsilon
+
+        actions = tf.where(random_mask, random_actions, greedy_actions)
+        return actions.numpy()
 
     def get_action(self, state, epsilon):
         if np.random.rand() <= epsilon:
@@ -50,8 +84,21 @@ class DQNAgent:
         q_values = self.model.predict(state.reshape(1, -1), verbose=0)
         return np.argmax(q_values[0])
 
+    def _train_step(self, states, actions, rewards, next_states, dones):
+        with tf.GradientTape() as tape:
+            q_values = self.model(states)
+            q_s_a = tf.reduce_sum(q_values * tf.one_hot(actions, self.action_dim), axis=1)
+
+            next_q_values = self.target_model(next_states)
+            max_next_q = tf.reduce_max(next_q_values, axis=1)
+            targets = rewards + (1.0 - dones) * self.gamma * max_next_q
+            loss = self.loss_fn(targets, q_s_a)
+
+        grads = tape.gradient(loss, self.model.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+        return loss
+
     def train(self, replay_buffer, batch_size=64):
-        # Sample from buffer (Assuming you're using a deque or ReplayBuffer)
         batch = random.sample(replay_buffer, batch_size)
         states, actions, rewards, next_states, dones = map(np.array, zip(*batch))
 
@@ -65,7 +112,7 @@ class DQNAgent:
             q_values = self.model(states)
             q_s_a = tf.reduce_sum(q_values * tf.one_hot(actions, self.action_dim), axis=1)
 
-            next_q_values = self.model(next_states)
+            next_q_values = self.target_model(next_states)
             max_next_q = tf.reduce_max(next_q_values, axis=1)
             targets = rewards + (1.0 - dones) * self.gamma * max_next_q
             loss = self.loss_fn(targets, q_s_a)
@@ -86,6 +133,7 @@ class UnifiedCoagulationEnv(gym.Env):
         self.dosage_col_idx = list(df.columns).index('fecl3_concentration')
         self.model = supervised_model
         self.mode = mode
+        self._compiled_model = tf.function(self.model, reduce_retracing=True)
 
         # Dosage constraints
         self.action_low = 1.5
@@ -112,29 +160,44 @@ class UnifiedCoagulationEnv(gym.Env):
         return state, {}
 
     def vectorized_env_step(self, actions):
-
+        # 1. Action Mapping
         if self.mode == 'discrete':
             dosages = self.dosage_list[actions]
         else:
             dosages = np.clip(actions.flatten(), self.action_low, self.action_high)
 
+        # 2. Update dosage column in our local numpy array
+        # This avoids the expensive .copy() operation
+        self.df_np[:, self.dosage_col_idx] = dosages
 
-        states_np = self.df.copy()
-        states_np[:, self.dosage_col_idx] = dosages
+        # 3. Predict Turbidity using the COMPILED graph
+        # We pass the full array as a tensor to avoid Python overhead
+        input_tensor = tf.convert_to_tensor(self.df_np, dtype=tf.float32)
 
+        # This is the line that was causing the NameError
+        turb_pred_tensor = self._compiled_model(input_tensor)
+        turb_pred = turb_pred_tensor.numpy().flatten()
 
-        turb_preds = self.model(states_np, training=False).numpy().flatten()
-
+        # 4. Unified Reward Calculation (Vectorized NumPy)
         target = 6.0
-        turb_term = -0.3 * np.abs(turb_preds - target) / target
-        dose_term = -2.0 * (dosages - self.action_low) / self.action_high
-        penalty = -3.0 * np.square(np.maximum(0, turb_preds - target))
 
-        rewards = turb_term + dose_term + penalty
-        rewards += np.where((turb_preds >= 5.0) & (turb_preds <= 6.0), 3.0, 0.0)
-        rewards = np.clip(rewards, -25.0, 5.0)
+        # Performance Reward: Massive penalty if > 6.0, Quadratic pull if <= 6.0
+        perf_reward = np.where(
+            turb_pred > target,
+            -2.0 * (turb_pred - target + 1.0),
+            -0.15 * (target - turb_pred)**2
+        )
 
-        return self.all_next_states, rewards, turb_preds, dosages
+        # Dosage Penalty: Only applies in the safe zone
+        dose_penalty = np.where(
+            turb_pred > target,
+            0.0,
+            -0.2 * (dosages - self.action_low)
+        )
+
+        rewards = perf_reward + dose_penalty
+
+        return self.all_next_states, rewards, turb_pred, dosages
 
     def step(self, action):
         if self.current_step >= len(self.df_np):
@@ -151,30 +214,22 @@ class UnifiedCoagulationEnv(gym.Env):
         state_input = current_row.reshape(1, -1)
         turb_pred = float(self.model(state_input, training=False).numpy().flatten()[0])
 
+        #--- NEW REWARD LOGIC ---#
         target = 6.0
-        turb_term = -0.3 * np.abs(turb_pred - target) / target
-        dose_term = -2.0 * (dosage - self.action_low) / self.action_high
-        penalty = -3.0 * np.square(np.maximum(0, turb_pred - target))
-
-        reward = turb_term + dose_term + penalty
-        if 5.0 <= turb_pred <= 6.0:
-            reward += 3.0
-        reward = np.clip(reward, -25.0, 5.0)
+        if turb_pred > target:
+            # NO dosage penalty here, just turbidity penalty
+            reward = -2.0 * (turb_pred - target + 1.0)
+        else:
+            # Performance reward + Dosage penalty
+            reward = -0.15 * (target - turb_pred)**2
+            reward -= 0.2 * (dosage - self.action_low)
 
         self.current_step += 1
-
         terminated = self.current_step >= len(self.df_np) - 1
-        truncated = False
+        truncated = False  # Add this line here
+        next_state = self.df_np[self.current_step] if not terminated else current_row
 
-        if terminated:
-            next_state = current_row # Stay on last row
-        else:
-            next_state = self.df_np[self.current_step]
-
-        info = {
-            'turbidity': turb_pred,
-            'dosage': dosage
-        }
+        info = {'turbidity': turb_pred, 'dosage': dosage}
 
         return next_state, float(reward), terminated, truncated, info
 
@@ -242,34 +297,51 @@ class ReplayBuffer:
 # 4. TD3 Agent
 #-----------------------------------------------------------------------#
 class TD3Agent:
-    def __init__(self, state_dim, action_dim, action_high,max_size=100000):
+    def __init__(self, state_dim, action_dim, action_high=6,action_low=1.5, max_size=100000):
+        # Hyperparameters
         self.tau = 0.005
         self.gamma = 0.99
         self.policy_noise = 0.2
         self.noise_clip = 0.5
+        self.policy_freq = 2 # Standard TD3 delay
+        self.total_it = 0
+
+        # RL model boundaries
         self.action_high = action_high
+        self.action_low = action_low
+
+        # Exploration Noise Settings
         self.replay_buffer = ReplayBuffer(max_size)
+        self.exploration_noise = 0.3
+        self.noise_min = 0.05
+        self.noise_decay = 0.995
+
+
+
         # Actor
         self.actor = self.build_actor(state_dim)
         self.actor_target = self.build_actor(state_dim)
         self.actor_target.set_weights(self.actor.get_weights())
         self.actor_opt = tf.keras.optimizers.Adam(1e-4)
 
-        # Critics (Twin Q-Networks)
+        # Twin Critic Networks
         self.critic1 = self.build_critic(state_dim, action_dim)
         self.critic2 = self.build_critic(state_dim, action_dim)
         self.critic1_target = self.build_critic(state_dim, action_dim)
         self.critic2_target = self.build_critic(state_dim, action_dim)
         self.critic1_target.set_weights(self.critic1.get_weights())
         self.critic2_target.set_weights(self.critic2.get_weights())
-        self.critic_opt = tf.keras.optimizers.Adam(3e-4)
+        self.critic_opt = tf.keras.optimizers.Adam(1e-3)
 
     def build_actor(self, state_dim):
+        last_init = initializers.RandomUniform(minval=-0.003, maxval=0.003)
         inputs = tf.keras.layers.Input(shape=(state_dim,))
         x = tf.keras.layers.Dense(256, activation='relu')(inputs)
+        x = layers.LayerNormalization()(x)
         x = tf.keras.layers.Dense(256, activation='relu')(x)
-        outputs = tf.keras.layers.Dense(1, activation='tanh')(x)
-        return tf.keras.Model(inputs, outputs)
+        outputs = layers.Dense(1, activation='tanh', kernel_initializer=last_init)(x)
+        #outputs = tf.keras.layers.Dense(1, activation='tanh')(x)
+        return models.Model(inputs, outputs)
 
     def build_critic(self, state_dim, action_dim):
         s_in = tf.keras.layers.Input(shape=(state_dim,))
@@ -278,9 +350,11 @@ class TD3Agent:
         x = tf.keras.layers.Dense(256, activation='relu')(x)
         x = tf.keras.layers.Dense(256, activation='relu')(x)
         q_out = tf.keras.layers.Dense(1)(x)
-        return tf.keras.Model([s_in, a_in], q_out)
+        #return tf.keras.Model([s_in, a_in], q_out)
+        return models.Model([s_in, a_in], q_out)
 
     def train(self, replay_buffer, batch_size=64):
+        self.total_it += 1
         states, actions, rewards, next_states, dones = replay_buffer.sample(batch_size)
 
         states = tf.convert_to_tensor(states, dtype=tf.float32)
@@ -291,7 +365,7 @@ class TD3Agent:
 
         # 1. Update Critics
         with tf.GradientTape(persistent=True) as tape:
-            noise = tf.clip_by_value(tf.random.normal(tf.shape(actions), stddev=0.2), -0.5, 0.5)
+            noise = tf.clip_by_value(tf.random.normal(tf.shape(actions), stddev=self.policy_noise), -self.noise_clip, self.noise_clip)
             next_actions = tf.clip_by_value(self.actor_target(next_states) + noise, -1.0, 1.0)
 
             target_Q1 = self.critic1_target([next_states, next_actions])
@@ -301,20 +375,26 @@ class TD3Agent:
 
             current_Q1 = self.critic1([states, actions])
             current_Q2 = self.critic2([states, actions])
-            loss = tf.reduce_mean(tf.square(current_Q1 - y)) + tf.reduce_mean(tf.square(current_Q2 - y))
+            critic_loss = tf.reduce_mean(tf.square(current_Q1 - y)) + tf.reduce_mean(tf.square(current_Q2 - y))
 
-        grads = tape.gradient(loss, self.critic1.trainable_variables + self.critic2.trainable_variables)
+        grads = tape.gradient(critic_loss, self.critic1.trainable_variables + self.critic2.trainable_variables)
         self.critic_opt.apply_gradients(zip(grads, self.critic1.trainable_variables + self.critic2.trainable_variables))
 
-        # 2. Delayed Actor Update
-        with tf.GradientTape() as actor_tape:
-            actor_loss = -tf.reduce_mean(self.critic1([states, self.actor(states)]))
+        # --- 2. Delayed Actor Update ---
+        actor_loss = None
+        if self.total_it % self.policy_freq == 0:
+            with tf.GradientTape() as actor_tape:
+                # We want to maximize the Q-value, so minimize negative Q
+                actor_loss = -tf.reduce_mean(self.critic1([states, self.actor(states)]))
 
-        actor_grads = actor_tape.gradient(actor_loss, self.actor.trainable_variables)
-        self.actor_opt.apply_gradients(zip(actor_grads, self.actor.trainable_variables))
+            actor_grads = actor_tape.gradient(actor_loss, self.actor.trainable_variables)
+            self.actor_opt.apply_gradients(zip(actor_grads, self.actor.trainable_variables))
 
-        # 3. Soft Update Targets
-        self._update_targets()
+            # --- 3. Soft Update Target Networks ---
+            # Targets only update when the Actor updates
+            self._update_targets()
+
+        return critic_loss.numpy(), (actor_loss.numpy() if actor_loss is not None else 0)
 
     def select_action(self, state, explore=True):
         state = np.array(state).reshape(1, -1)
@@ -322,17 +402,24 @@ class TD3Agent:
         raw_action = self.actor(state, training=False).numpy().flatten()
 
         if explore:
-           noise = np.random.normal(0, self.policy_noise, size=raw_action.shape)
+           noise = np.random.normal(0, self.exploration_noise, size=raw_action.shape)
            raw_action = np.clip(raw_action + noise, -1.0, 1.0)
 
         # Convert [-1, 1] to [1.5, 6.0] for the environment
-        action_env = 1.5 + (raw_action + 1.0) * (6.0 - 1.5) / 2.0
-        return action_env
+        action_env = self.action_low + (raw_action + 1.0) * (self.action_high - self.action_low) / 2.0
+        return action_env, raw_action
 
     def _update_targets(self):
         for t, s in zip(self.actor_target.weights, self.actor.weights): t.assign(t * (1-self.tau) + s * self.tau)
         for t, s in zip(self.critic1_target.weights, self.critic1.weights): t.assign(t * (1-self.tau) + s * self.tau)
         for t, s in zip(self.critic2_target.weights, self.critic2.weights): t.assign(t * (1-self.tau) + s * self.tau)
+
+    def load(self, filename):
+        self.actor.load_weights(filename)
+        self.actor_target.load_weights(filename)
+
+    def save(self, filename):
+        self.actor.save_weights(filename)
 
 
 #-----------------------------------------------------------------------#
