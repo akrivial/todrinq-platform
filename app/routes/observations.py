@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query
 
-from app.services.observation_store import DB_PATH, observation_history
+from app.services.observation_store import database_status, observation_history
+from app.services.prediction_scheduler import scheduler_status
 
 
 router = APIRouter(prefix="/observations", tags=["Observation History"])
@@ -14,5 +15,4 @@ def history(sensor_id: str, limit: int = Query(48, ge=1, le=2000), kind: str | N
 
 @router.get("/status")
 def status():
-    return {"database": str(DB_PATH), "backend": "sqlite", "history_available": True}
-
+    return {**database_status(), "history_available": True, "scheduler": scheduler_status()}

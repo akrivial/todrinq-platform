@@ -9,6 +9,7 @@ from app.services.ozonation_predictions import (
     predict_bromate,
     predict_coliform,
 )
+from app.services.observation_store import clear_risk_signal_history, record_risk_signal
 
 router = APIRouter(tags=["Risk Module"])
 
@@ -210,6 +211,7 @@ def apply_runtime_reliability(
     history = RELIABILITY_HISTORY[sensor_key]
     if reset_history:
         history.clear()
+        clear_risk_signal_history(sensor_key)
 
     try:
         observed_at = _parse_prediction_time(prediction_timestamp)
@@ -234,18 +236,11 @@ def apply_runtime_reliability(
     elif stale:
         status, included, effective_class = "stale", False, "Unavailable"
     else:
-        history_item = {
-            "timestamp": observed_at.isoformat(),
-            "value": float(value),
-            "raw_class": raw_class,
-        }
-        # Re-evaluating the same stored prediction (for example after a UI
-        # refresh) must not count as another consecutive prediction.
-        if history and history[-1]["timestamp"] == history_item["timestamp"]:
-            history[-1] = history_item
-        else:
-            history.append(history_item)
-        history[:] = history[-24:]
+        # Database-backed upsert makes the confirmation state durable across
+        # AWS container restarts and prevents UI refreshes from counting twice.
+        history[:] = record_risk_signal(
+            sensor_key, observed_at, float(value), raw_class, limit=24
+        )
         consecutive_high = 0
         for item in reversed(history):
             if str(item["raw_class"]).lower() != "high":
@@ -437,6 +432,7 @@ def _record_sose9_hourly_prediction(
 ) -> tuple[int, list[dict]]:
     if reset_history:
         SOSE9_HOURLY_HISTORY.clear()
+        clear_risk_signal_history("source_sose9")
 
     hour_key = _sose9_hour_key(prediction_timestamp)
     entry = {
@@ -445,14 +441,20 @@ def _record_sose9_hourly_prediction(
         "exceeds_high_threshold": predicted_turbidity > SOSE9_REF_P95,
     }
 
-    for idx, existing in enumerate(SOSE9_HOURLY_HISTORY):
-        if existing["hour_key"] == hour_key:
-            SOSE9_HOURLY_HISTORY[idx] = entry
-            break
-    else:
-        SOSE9_HOURLY_HISTORY.append(entry)
-
-    SOSE9_HOURLY_HISTORY[:] = SOSE9_HOURLY_HISTORY[-24:]
+    signal_time = (
+        datetime.fromisoformat(hour_key.replace("Z", "+00:00"))
+        if not hour_key.startswith("manual-")
+        else datetime.now(timezone.utc)
+    )
+    persisted = record_risk_signal(
+        "source_sose9", signal_time, predicted_turbidity,
+        "High" if entry["exceeds_high_threshold"] else "Low", limit=24,
+    )
+    SOSE9_HOURLY_HISTORY[:] = [{
+        "hour_key": item["timestamp"],
+        "prediction": round(item["value"], 4),
+        "exceeds_high_threshold": item["raw_class"].lower() == "high",
+    } for item in persisted]
 
     consecutive = 0
     for item in reversed(SOSE9_HOURLY_HISTORY):

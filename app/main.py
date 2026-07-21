@@ -39,6 +39,8 @@ from app.routes.observations import router as observations_router
 from app.routes.rws_test import router as rws_test_router
 
 from app.model_registry import status, ready
+from app.services.observation_store import database_status, initialize_database
+from app.services.prediction_scheduler import start_prediction_scheduler, stop_prediction_scheduler
 
 # --- Paths ---
 APP_DIR = Path(__file__).resolve().parent
@@ -137,6 +139,17 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+
+@app.on_event("startup")
+async def startup_services():
+    initialize_database()
+    start_prediction_scheduler()
+
+
+@app.on_event("shutdown")
+async def shutdown_services():
+    await stop_prediction_scheduler()
 
 # --- CORS ---
 app.add_middleware(
@@ -413,7 +426,8 @@ def api_root():
 @app.get("/healthz", tags=["System"])
 def healthz():
     return {
-        "ok": True
+        "ok": True,
+        "database": database_status(),
     }
 
 

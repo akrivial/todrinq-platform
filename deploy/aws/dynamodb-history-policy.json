@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "ToDrinQHistoryTable",
+    "Effect": "Allow",
+    "Action": [
+      "dynamodb:DescribeTable",
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:Query",
+      "dynamodb:BatchWriteItem"
+    ],
+    "Resource": "arn:aws:dynamodb:eu-central-1:117622437743:table/todrinq-platform-history"
+  }]
+}

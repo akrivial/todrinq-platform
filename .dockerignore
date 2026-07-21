@@ -9,3 +9,6 @@ __pycache__/
 tests/
 docs/
 *.log
+app/data/*.sqlite3
+app/data/*.sqlite3-*
+.env*
