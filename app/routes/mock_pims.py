@@ -1,13 +1,13 @@
 from fastapi import APIRouter
-from datetime import datetime
+from datetime import datetime, timezone
 import random
 
 router = APIRouter()
 
 
-def generate_coagulation_data():
+def generate_coagulation_data(observed_at: str | None = None):
     return {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": observed_at or datetime.now(timezone.utc).isoformat(),
         "ftu_raw_water": round(random.uniform(3.0, 12.0), 2),
         "fecl3_concentration": round(random.uniform(1.0, 8.0), 2),
         "temperature_raw_water": round(random.uniform(5.0, 22.0), 2),
@@ -18,14 +18,46 @@ def generate_coagulation_data():
     }
 
 
-def generate_ct_data():
+def generate_coagulation_measurement(observed_at: str, expected_turbidity: float | None = None):
+    """Mock outlet-turbidity feed; replace its caller with real PIMS later."""
+    centre = float(expected_turbidity) if expected_turbidity is not None else random.uniform(0.4, 8.0)
+    uncertainty = max(0.08, abs(centre) * 0.08)
     return {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": observed_at,
+        "outlet_turbidity": round(max(0.0, centre + random.gauss(0.0, uncertainty)), 3),
+        "unit": "NTU / model output",
+        "source": "mock_pims_coagulation_measurement",
+        "quality": "synthetic_demo",
+    }
+
+
+def generate_ct_data(observed_at: str | None = None):
+    return {
+        "timestamp": observed_at or datetime.now(timezone.utc).isoformat(),
         "Chamber": round(random.uniform(1, 4), 2),
         "WaterTemperature": round(random.uniform(5.0, 22.0), 2),
         "RFTurbidity": round(random.uniform(0.1, 5.0), 2),
         "FlowRate": round(random.uniform(100.0, 500.0), 2),
         "Ozonedosage": round(random.uniform(0.5, 5.0), 2),
+    }
+
+
+def generate_ct_measurement(observed_at: str, expected_ct: float | None = None):
+    """Mock the sparse CT result feed that will later be replaced by real PIMS/lab data.
+
+    ``observed_at`` is supplied by the sampling schedule so the measurement and
+    its corresponding model prediction refer to exactly the same sample time.
+    ``expected_ct`` keeps demonstration values plausible; it is not returned as
+    or labelled as a real Waternet measurement.
+    """
+    centre = float(expected_ct) if expected_ct is not None else random.uniform(0.7, 1.6)
+    uncertainty = max(0.03, abs(centre) * 0.06)
+    return {
+        "timestamp": observed_at,
+        "CT_All": round(max(0.0, centre + random.gauss(0.0, uncertainty)), 4),
+        "unit": "mg*min/L",
+        "source": "mock_pims_ct_measurement",
+        "quality": "synthetic_demo",
     }
 
 

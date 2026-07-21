@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.routes.predict import (
     CoagulationInput,
@@ -9,6 +9,7 @@ from app.routes.predict import (
 from app.routes.mock_pims import (
     generate_coagulation_data,
     generate_ct_data,
+    generate_ct_measurement,
     generate_bromate_data,
     generate_coliform_data,
 )
@@ -17,6 +18,7 @@ from app.services.ozonation_predictions import (
     predict_bromate,
     predict_coliform,
 )
+from app.services.observation_store import record_observation
 
 router = APIRouter(tags=["Treatment Module"])
 
@@ -261,6 +263,11 @@ def ct_latest():
         pred = unwrap(predict_ct([payload_values(body, CT_FEATURES)]))
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"CT model unavailable or scaling requires validation: {str(e)}")
+    storage = record_observation(
+        sensor_id="ct_exposure", value=pred, unit="mg*min/L",
+        observed_at=data["timestamp"], source="mock_pims", model_version="SoSe-10",
+        metadata={"input": input_data, "validation_status": "under_validation"},
+    )
     return {
         "display_name": SOSE_10["display_name"],
         "input_data": input_data,
@@ -269,6 +276,7 @@ def ct_latest():
         "timestamp": data["timestamp"],
         "resolution": "1h",
         "validation_warning": "TODO(Akrivi/Greg/Alex): validate CT scaling and expected reference around 1.2 before operational display.",
+        "persistence": storage,
     }
 
 
@@ -279,11 +287,80 @@ def ct(payload: CTInput):
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"CT model unavailable or scaling requires validation: {str(e)}")
 
+    timestamp = datetime.now(timezone.utc).isoformat()
+    storage = record_observation(
+        sensor_id="ct_exposure", value=pred, unit="mg*min/L",
+        observed_at=timestamp, source="manual", model_version="SoSe-10",
+        metadata={"input": payload.dict(), "validation_status": "under_validation"},
+    )
     return {
         "display_name": SOSE_10["display_name"],
         "prediction": pred,
         "unit": "mg*min/L",
+        "timestamp": timestamp,
+        "resolution": "1h",
         "validation_warning": "TODO(Akrivi/Greg/Alex): validate CT scaling and expected reference around 1.2 before operational display.",
+        "persistence": storage,
+    }
+
+
+@router.post("/ozonation/ct/history/mock", summary="Generate five CT validation samples over 50 days")
+def ct_mock_history(points: int = 5, interval_days: int = 10):
+    """Create clearly-labelled mock prediction/measurement pairs for sparse CT validation."""
+    safe_points = max(1, min(int(points), 12))
+    safe_interval = max(1, min(int(interval_days), 90))
+    now = datetime.now(timezone.utc)
+    items = []
+    for offset in range(safe_points, 0, -1):
+        observed_at = (now - timedelta(days=offset * safe_interval)).isoformat()
+        sample = generate_ct_data(observed_at=observed_at)
+        input_data = {key: value for key, value in sample.items() if key != "timestamp"}
+        try:
+            body = CTInput(**input_data)
+            prediction = unwrap(predict_ct([payload_values(body, CT_FEATURES)]))
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"CT model unavailable during mock history generation: {exc}")
+        prediction_storage = record_observation(
+            sensor_id="ct_exposure", value=prediction, unit="mg*min/L",
+            observed_at=observed_at, source="mock_pims_validation_demo", model_version="SoSe-10",
+            metadata={
+                "input": input_data,
+                "demonstration": True,
+                "validation_status": "under_validation",
+                "sample_timestamp": observed_at,
+            },
+        )
+        # This dedicated mock measurement feed has the same interface and exact
+        # sample timestamp expected from the future real PIMS/laboratory feed.
+        measurement = generate_ct_measurement(observed_at, expected_ct=prediction)
+        measured = measurement["CT_All"]
+        measurement_storage = record_observation(
+            sensor_id="ct_exposure", value=measured, unit="mg*min/L",
+            observed_at=measurement["timestamp"], source=measurement["source"],
+            model_version=None, kind="measurement",
+            metadata={
+                "demonstration": True,
+                "sampling_interval_days": safe_interval,
+                "quality": measurement["quality"],
+                "sample_timestamp": measurement["timestamp"],
+                "future_source": "real_pims_or_laboratory_ct_feed",
+            },
+        )
+        items.append({
+            "timestamp": observed_at,
+            "prediction": prediction,
+            "measurement": measured,
+            "unit": "mg*min/L",
+            "source": "mock_pims_ct_validation",
+            "prediction_persistence": prediction_storage,
+            "measurement_persistence": measurement_storage,
+        })
+    return {
+        "mode": "demonstration",
+        "sampling_interval_days": safe_interval,
+        "disclaimer": "Five synthetic Mock PIMS CT measurements at exact 10-day sample times; the same interface will consume real PIMS/laboratory CT measurements when connected.",
+        "count": len(items),
+        "items": items,
     }
 
 
@@ -299,6 +376,9 @@ def bromate_latest():
         pred = unwrap(predict_bromate([payload_values(body, BROMATE_FEATURES)]))
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Bromate model unavailable: {str(e)}")
+    storage = record_observation(sensor_id="bromate_outlet", value=pred, unit="ug/L",
+        observed_at=data["timestamp"], source="mock_pims", model_version="SoSe-10.1",
+        metadata={"input": input_data})
     return {
         "display_name": SOSE_101["display_name"],
         "input_data": input_data,
@@ -306,6 +386,7 @@ def bromate_latest():
         "unit": "ug/L",
         "timestamp": data["timestamp"],
         "resolution": "1h",
+        "persistence": storage,
     }
 
 
@@ -315,11 +396,16 @@ def bromate(payload: BromateInput):
         pred = unwrap(predict_bromate([payload_values(payload, BROMATE_FEATURES)]))
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Bromate model unavailable: {str(e)}")
-
+    timestamp = datetime.now(timezone.utc).isoformat()
+    storage = record_observation(sensor_id="bromate_outlet", value=pred, unit="ug/L",
+        observed_at=timestamp, source="manual", model_version="SoSe-10.1",
+        metadata={"input": payload.dict()})
     return {
         "display_name": SOSE_101["display_name"],
         "prediction": pred,
         "unit": "ug/L",
+        "timestamp": timestamp,
+        "persistence": storage,
     }
 
 
@@ -335,6 +421,9 @@ def coliform_latest():
         pred = unwrap(predict_coliform([payload_values(body, COLIFORM_FEATURES)]))
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Coliform/microbial-removal model unavailable: {str(e)}")
+    storage = record_observation(sensor_id="microbial_log_removal", value=pred,
+        unit="dimensionless log removal", observed_at=data["timestamp"], source="mock_pims",
+        model_version="SoSe-10.2", metadata={"input": input_data})
     return {
         "display_name": SOSE_102["display_name"],
         "input_data": input_data,
@@ -342,6 +431,7 @@ def coliform_latest():
         "unit": "dimensionless log removal",
         "timestamp": data["timestamp"],
         "resolution": "1h",
+        "persistence": storage,
     }
 
 
@@ -351,11 +441,16 @@ def coliform(payload: ColiformInput):
         pred = unwrap(predict_coliform([payload_values(payload, COLIFORM_FEATURES)]))
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Coliform/microbial-removal model unavailable: {str(e)}")
-
+    timestamp = datetime.now(timezone.utc).isoformat()
+    storage = record_observation(sensor_id="microbial_log_removal", value=pred,
+        unit="dimensionless log removal", observed_at=timestamp, source="manual",
+        model_version="SoSe-10.2", metadata={"input": payload.dict()})
     return {
         "display_name": SOSE_102["display_name"],
         "prediction": pred,
         "unit": "dimensionless log removal",
+        "timestamp": timestamp,
+        "persistence": storage,
     }
 
 

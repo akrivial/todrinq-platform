@@ -5,6 +5,8 @@
 const ENDPOINTS = {
   coagulation: "/predict/coagulation",
   coagulationLive: "/predict/coagulation/live",
+  coagulationMockHistory: "/predict/coagulation/history/mock?points=6&interval_hours=1",
+  coagulationObservationHistory: "/observations/history?sensor_id=coagulation_outlet_turbidity&limit=200",
 
   sourceOverview: "/source/overview",
   sourceLatest: "/source/sose-9/latest",
@@ -13,14 +15,17 @@ const ENDPOINTS = {
 
   treatmentOverview: "/treatment/overview",
   treatmentCoagLatest: "/treatment/coagulation/latest",
-  treatmentRLLatest: "/treatment/coagulation/rl/latest",
+  treatmentRLLatest: "/treatment/coagulation/rl/recommendation/latest",
   treatmentCT: "/treatment/ozonation/ct",
   treatmentBromate: "/treatment/ozonation/bromate",
   treatmentColiform: "/treatment/ozonation/coliform",
   treatmentCTLatest: "/treatment/ozonation/ct/latest",
+  treatmentCTMockHistory: "/treatment/ozonation/ct/history/mock?points=5&interval_days=10",
   treatmentBromateLatest: "/treatment/ozonation/bromate/latest",
   treatmentColiformLatest: "/treatment/ozonation/coliform/latest",
   treatmentBactoSense: "/treatment/hard-sensors/bactosense-4/latest",
+  ctObservationHistory: "/observations/history?sensor_id=ct_exposure&limit=200",
+  bromateObservationHistory: "/observations/history?sensor_id=bromate_outlet&limit=200",
   rwsLatest: "/source/hard-sensors/rws/latest",
   rwsTimeseries: "/source/hard-sensors/rws/timeseries",
 
@@ -46,27 +51,27 @@ const breadcrumbs = document.getElementById("breadcrumbs");
 
 const screenTitles = {
   "screen-home": "ToDrinQ Platform / Home Page",
-  "screen-source": "Source Module – Inlet Turbidity Prediction — SoSe #9",
+  "screen-source": "Source Module – Inlet Turbidity Prediction",
   "screen-treatment": "Treatment Module",
   "screen-treatment-overview": "Treatment Overview",
   "screen-hard-placeholder": "Hard Sensor Monitoring",
   "screen-soft-select": "Soft Sensor Platform Models",
-  "screen-coagulation": "Turbidity After Coagulation, Flocculation and Sedimentation — SoSe #8",
-  "screen-rl5": "FeCl₃ Dosing Advisory — RL #5",
-  "screen-ozonation-select": "Ozonation Models — SoSe #10 / #10.1 / #10.2",
-  "screen-ct": "CT / Ozone Exposure — SoSe #10",
-  "screen-bromate": "Bromate Formation — SoSe #10.1",
-  "screen-coliform": "Microbial Removal — SoSe #10.2",
-  "screen-ozonation-dashboard": "Ozonation Decision Support — SoSe #10 / #10.1 / #10.2",
-  "screen-hard-sensors": "BactoSense Monitoring — Hard Sensor #4",
-  "screen-distribution": "Distribution Module – SoSe #11",
+  "screen-coagulation": "Turbidity After Coagulation, Flocculation and Sedimentation",
+  "screen-rl5": "FeCl₃ Dosing Advisory",
+  "screen-ozonation-select": "Ozonation Decision Support",
+  "screen-ct": "CT / Ozone Exposure",
+  "screen-bromate": "Bromate Formation",
+  "screen-coliform": "Microbial Removal",
+  "screen-ozonation-dashboard": "Ozonation Decision Support",
+  "screen-hard-sensors": "BactoSense Monitoring",
+  "screen-distribution": "Distribution Biological-Stability Monitoring",
   "screen-risk": "Risk Module",
   "screen-risk-overview": "Risk Overview",
-  "screen-risk-source": "Inlet Turbidity Attention — SoSe #9",
-  "screen-risk-coagulation": "Outlet Turbidity Risk — SoSe #8",
-  "screen-risk-rl5": "RL #5 Advisory Validation",
-  "screen-risk-ozonation": "Combined Ozonation Risk — SoSe #10 / #10.1 / #10.2",
-  "screen-risk-distribution": "SoSe #11 Distribution Risk",
+  "screen-risk-source": "Inlet Turbidity Attention",
+  "screen-risk-coagulation": "Outlet Turbidity Risk",
+  "screen-risk-rl5": "Coagulant-Dosing Advisory Validation",
+  "screen-risk-ozonation": "Combined Ozonation Risk",
+  "screen-risk-distribution": "Distribution Biological-Stability Risk",
   "screen-risk-treatment": "Treatment Current Risk",
   "screen-risk-system": "Source-to-Tap System Risk"
 };
@@ -81,7 +86,8 @@ const state = {
   coagulation: {
     lastInput: null,
     lastPrediction: null,
-    lastRisk: null
+    lastRisk: null,
+    lastTimestamp: null
   },
   rl5: {
     lastInput: null,
@@ -95,11 +101,13 @@ const state = {
     coliformInput: null,
     coliformPrediction: null,
     combinedRisk: null,
-    operationalRisk: null
+    operationalRisk: null,
+    lastTimestamp: null
   },
   distribution: {
     lastInput: null,
-    lastRisk: null
+    lastRisk: null,
+    lastTimestamp: null
   }
 };
 
@@ -181,15 +189,12 @@ function normalizeBooleanStrings(obj) {
   return obj;
 }
 
-const TOKEN = "todrinq-demo-2026";
-
-function withToken(url) {
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${TOKEN}`;
-}
-
 async function getJSON(url) {
-  const r = await fetch(withToken(url));
+  const r = await fetch(url, { credentials: "same-origin" });
+  if (r.status === 401) {
+    window.location.href = "/login";
+    throw new Error("Session expired");
+  }
   if (!r.ok) {
     const text = await r.text();
     throw new Error(`${r.status} ${text}`);
@@ -198,11 +203,17 @@ async function getJSON(url) {
 }
 
 async function postJSON(url, payload) {
-  const r = await fetch(withToken(url), {
+  const r = await fetch(url, {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
+
+  if (r.status === 401) {
+    window.location.href = "/login";
+    throw new Error("Session expired");
+  }
 
   if (!r.ok) {
     const text = await r.text();
@@ -215,7 +226,14 @@ async function postJSON(url, payload) {
 function renderJSON(id, data) {
   const el = document.getElementById(id);
   if (!el) return;
-  el.textContent = JSON.stringify(data, null, 2);
+  const isError = Boolean(data?.error);
+  const message = isError
+    ? data.error
+    : data?.message || data?.description || "The backend response was received successfully.";
+  el.innerHTML = `<div class="info-box">
+    <strong>${isError ? "Request unavailable" : "Service response"}</strong><br>
+    ${escapeHtml(message)}
+  </div>`;
 }
 
 function renderStatusCard(id, title, data) {
@@ -237,29 +255,11 @@ function renderRL5Advisory(id, data) {
   const el = document.getElementById(id);
   if (!el) return;
   const advisory = data?.operator_advisory || {};
-  const dose = extractNumber(advisory.recommended_fecl3_dose ?? data?.recommended_fecl3_concentration?.value);
-  const turb = extractNumber(advisory.predicted_effluent_turbidity ?? data?.predicted_outlet_turbidity?.value);
-  const flow = extractNumber(data?.recommended_fecl3_dosing_flow?.value);
   const status = advisory.confidence_status || data?.validation_status || "under validation";
   el.innerHTML = `
-    <div class="rc rc--moderate">
-      <div class="rc-header">
-        <span class="rc-icon">&#9888;</span>
-        <div class="rc-header-text">
-          <span class="rc-sensor">FeCl3 dosing advisory</span>
-          <div class="rc-level">${escapeHtml(status).toUpperCase()}</div>
-        </div>
-      </div>
-      <div class="rc-body">
-        <div class="rc-detail-grid">
-          <div><span>Recommended FeCl3 dose</span><strong>${dose == null ? "Awaiting run" : dose.toFixed(2)} mg/L</strong></div>
-          <div><span>Predicted effluent turbidity</span><strong>${turb == null ? "Awaiting validation" : turb.toFixed(3)} NTU</strong></div>
-          <div><span>Dosing-flow conversion</span><strong>${flow == null ? "Awaiting flow input" : flow.toFixed(2)}</strong></div>
-          <div><span>Timestamp</span><strong>&#128337; ${escapeHtml(data?.timestamp || "latest advisory run")}</strong></div>
-        </div>
-        <div class="rc-message">${escapeHtml(data?.validation_message || "RL #5 is advisory support only and remains under validation.")}</div>
-        ${_rcActions(data?.validation_todos || ["TODO(Greg): verify ACTION_MAP, unit conversion, and model-output interpretation before final release."])}
-      </div>
+    <div class="rl-validation-note">
+      <strong>Advisory only · ${escapeHtml(status)}</strong>
+      <span>Generated ${escapeHtml(data?.timestamp || "on the latest model run")}. Operator review is required before changing the dose.</span>
     </div>`;
 }
 
@@ -412,7 +412,7 @@ function renderRichRisk(id, data) {
   if (!el) return;
 
   if (!data || data.error) {
-    el.innerHTML = `<pre class="json-box">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+    el.innerHTML = `<div class="info-box"><strong>Risk assessment unavailable</strong><br>${escapeHtml(data?.error || "No assessment was returned.")}</div>`;
     return;
   }
 
@@ -429,7 +429,7 @@ function renderRichRisk(id, data) {
   const mod = _rcClass(overall.class);
 
   // Determine icon from level
-  const icon = mod === "low" ? "🟢" : mod === "high" ? "🔴" : "🟡";
+  const icon = mod === "low" ? "🟢" : mod === "high" ? "🔴" : mod === "unavailable" ? "⚪" : "🟡";
 
   // Prediction value + unit (sensor-specific)
   const predVal = typeof data.prediction === "number" ? data.prediction.toFixed(3) : (data.prediction ?? "–");
@@ -484,6 +484,7 @@ function renderRichRisk(id, data) {
         </div>
         ${thresholdHint ? `<div class="rc-threshold-hint">${thresholdHint}</div>` : ""}
         ${mainMsg ? `<div class="rc-message">${escapeHtml(mainMsg)}</div>` : ""}
+        ${_reliabilityHtml(data.reliability)}
         ${sose9Details}
         ${distanceMsg ? `<div class="rc-distance">${escapeHtml(distanceMsg)}</div>` : ""}
         ${_rcActions(data.short_term_actions)}
@@ -504,26 +505,49 @@ function renderRichRisk(id, data) {
 
 function classifyCT(value) {
   if (value === null || value === undefined || Number.isNaN(value)) return "–";
-  if (value >= 0.7) return "Adequate";
-  if (value >= 0.3) return "Review";
-  return "Insufficient";
+  return value >= 1.2 ? "At/above provisional 1.2 line" : "Below provisional 1.2 line";
+}
+
+function updateCTDecisionSupport(data = {}) {
+  const ct = state.ozonation.ctPrediction;
+  const microbial = state.ozonation.coliformPrediction;
+  const timestamp = data.timestamp || state.ozonation.lastTimestamp;
+  const timestampEl = document.getElementById("ct-timestamp");
+  if (timestampEl) {
+    timestampEl.textContent = timestamp ? new Date(timestamp).toLocaleString() : "Timestamp unavailable";
+  }
+
+  const warningEl = document.getElementById("ct-validation-warning");
+  if (warningEl) {
+    warningEl.textContent = data.validation_warning ||
+      "Validation required: confirm model scaling, output unit and organism-specific CT/log-inactivation basis before operational use.";
+  }
+
+  const decisionEl = document.getElementById("ct-microbial-decision");
+  if (!decisionEl) return;
+  if (ct == null || microbial == null) {
+    decisionEl.textContent = "Awaiting both CT and microbial/log-removal predictions. No ozone-dose recommendation will be issued from CT alone while the target basis remains under validation.";
+    return;
+  }
+  decisionEl.innerHTML = `<strong>Joint result available for review.</strong> CT: ${Number(ct).toFixed(3)} mg*min/L; microbial removal: ${Number(microbial).toFixed(3)} log removal. The platform will not label disinfection adequate or recommend reducing ozone from these values until the organism-specific, temperature-dependent target and CT scaling are validated.`;
 }
 
 // For combined responses (ozonation current, treatment, system)
 function buildRichRiskHtml(data) {
   const overall = data.overall_risk || {};
   const mod = _rcClass(overall.class);
-  const icon = mod === "low" ? "🟢" : mod === "high" ? "🔴" : "🟡";
+  const icon = mod === "low" ? "🟢" : mod === "high" ? "🔴" : mod === "unavailable" ? "⚪" : "🟡";
 
   const compsHtml = data.components ? Object.entries(data.components).map(([k, c]) => {
     const cm = _rcClass(c.overall_risk?.class);
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #edf2f8;">
-      <span style="font-size:1.1rem;">${cm==="low"?"🟢":cm==="high"?"🔴":"🟡"}</span>
+      <span style="font-size:1.1rem;">${cm==="low"?"🟢":cm==="high"?"🔴":cm==="unavailable"?"⚪":"🟡"}</span>
       <div style="flex:1;">
         <strong style="font-size:.85rem;">${escapeHtml(c.sensor || k)}</strong>
         <span style="font-size:.75rem;color:var(--muted);margin-left:8px;">${(c.overall_risk?.class||"–").toUpperCase()}</span>
       </div>
       ${c.prediction != null ? `<span style="font-size:.82rem;font-weight:600;">${typeof c.prediction==="number"?c.prediction.toFixed(3):c.prediction}</span>` : ""}
+      ${_reliabilityHtml(c.reliability)}
     </div>`;
   }).join("") : "";
 
@@ -663,7 +687,7 @@ function renderCoagulationRisk(data, inlineId, fullId) {
       <div class="rc-header">
         <span class="rc-icon">${icon}</span>
         <div class="rc-header-text">
-          <span class="rc-sensor">SoSe #8 · Coagulation-Flocculation</span>
+          <span class="rc-sensor">Outlet turbidity after coagulation/flocculation <small class="sensor-chip">SoSe #8</small></span>
           <div class="rc-level">${(tl.level || "low").toUpperCase()} RISK</div>
         </div>
         ${row ? `<span class="rc-score-chip">Score ${row.risk_score}/9</span>` : ""}
@@ -687,7 +711,7 @@ function renderCoagulationRisk(data, inlineId, fullId) {
       ]) : ""}
     </div>`;
 
-  const inlineEl = document.getElementById(inlineId);
+  const inlineEl = inlineId ? document.getElementById(inlineId) : null;
   if (inlineEl) inlineEl.innerHTML = cardHtml;
 
   if (!fullId) return;
@@ -713,7 +737,7 @@ function renderCoagulationRisk(data, inlineId, fullId) {
           <span style="color:#00b894">■</span> Low &nbsp;
           <span style="color:#e67e22">■</span> Moderate &nbsp;
           <span style="color:#e74c3c">■</span> High &nbsp;|&nbsp;
-          T8 = SoSe #8 position
+          OT = outlet-turbidity position
         </span>
       </div>
       <table style="border-collapse:collapse;">
@@ -724,7 +748,7 @@ function renderCoagulationRisk(data, inlineId, fullId) {
           ${[0,1,2].map(c => {
             const here = r === sv-1 && c === lh-1;
             return `<td style="width:60px;height:50px;background:${matBg[r][c]};text-align:center;vertical-align:middle;border:2px solid #fff;border-radius:4px;">
-              ${here ? `<span style="display:inline-block;background:#fff;color:#222;border-radius:50%;width:26px;height:26px;line-height:26px;font-size:.68rem;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.2);">T8</span>` : ""}
+              ${here ? `<span style="display:inline-block;background:#fff;color:#222;border-radius:50%;width:26px;height:26px;line-height:26px;font-size:.68rem;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.2);">OT</span>` : ""}
             </td>`;
           }).join("")}
         </tr>`).join("")}
@@ -737,19 +761,18 @@ function renderCoagulationRisk(data, inlineId, fullId) {
 async function runAutomaticCoagulationRisk(payload) {
   try {
     populateCoagulationRiskForms(payload);
-    const data = await postJSON(ENDPOINTS.riskCoagulation, payload);
+    const riskPayload = {
+      ...payload,
+      prediction_timestamp: payload.prediction_timestamp || state.coagulation.lastTimestamp || new Date().toISOString()
+    };
+    const data = await postJSON(ENDPOINTS.riskCoagulation, riskPayload);
 
     state.coagulation.lastRisk = data;
 
-    renderCoagulationRisk(data, "coagulation-risk-output", "risk-coagulation-output");
-
-    const riskClass = data?.traffic_light?.level || data?.overall_risk?.class || "–";
-    setBadge("coagulation-risk-badge", `Risk: ${riskClass}`, riskBadgeClass(riskClass));
+    renderCoagulationRisk(data, null, "risk-coagulation-output");
     updateRiskOverview();
   } catch (err) {
-    renderJSON("coagulation-risk-output", { error: err.message });
     renderJSON("risk-coagulation-output", { error: err.message });
-    setBadge("coagulation-risk-badge", "Risk: error", "high");
   }
 }
 
@@ -939,10 +962,29 @@ const TL_BG          = { green: "#e8faf3", amber: "#fff8ee", red: "#fff0ee" };
 // Map backend level strings to CSS modifier class
 function _rcClass(level) {
   const l = (level || "").toLowerCase();
+  if (l === "unavailable" || l === "unknown") return "unavailable";
   if (l === "critical")              return "critical";
   if (l === "high")                  return "high";
   if (l === "moderate" || l === "medium") return "moderate";
   return "low";
+}
+
+function _reliabilityHtml(reliability) {
+  if (!reliability) return "";
+  const status = reliability.status || "unknown";
+  const messages = {
+    maintenance: "Under maintenance; excluded from risk aggregation.",
+    stale: "Latest result is stale; excluded from risk aggregation.",
+    invalid: "Result failed runtime validity checks; excluded from risk aggregation.",
+    suspected_outlier: "Abrupt change detected. High risk is awaiting confirmation.",
+    awaiting_confirmation: "High threshold reached; another High result is required for escalation.",
+    valid: "Runtime data-quality checks passed."
+  };
+  return `<div class="rc-message" style="margin-top:10px;">
+    <strong>Reliability: ${escapeHtml(status.replaceAll("_", " "))}</strong><br>
+    ${escapeHtml(messages[status] || "Reliability state is available in the API response.")}
+    ${reliability.display_count ? `<br>Persistent High: <strong>${escapeHtml(reliability.display_count)}</strong>` : ""}
+  </div>`;
 }
 
 // Small utility: build the footer metrics strip
@@ -980,7 +1022,7 @@ function renderInlineOzonationRisk(data, containerId) {
   el.innerHTML = `
     <div class="rc-duo">
       <div class="rc-duo-card rc-duo--${brMod}">
-        <div class="rc-duo-header">${br.icon} Bromate Risk · SoSe #10.1</div>
+        <div class="rc-duo-header">${br.icon} Bromate Risk <span class="sensor-chip">SoSe #10.1</span></div>
         <div class="rc-duo-body">
           <div class="rc-duo-level">${br.level.toUpperCase()}</div>
           <div class="rc-duo-value">${br.value.toFixed(2)} ${br.unit}</div>
@@ -1124,7 +1166,7 @@ function renderOzonationOperational(data, inlineId, fullId) {
 // Risk Overview — auto-populated grid from stored state
 // ------------------------------
 // ------------------------------
-// Live Process-Flow Diagram + Intervention Decision Tree
+// Live process-flow diagram; intervention support uses dynamic pathways.
 // ------------------------------
 const COAG_LOW = 6, COAG_HIGH = 9;
 const BROMATE_TH_LOW = 5, BROMATE_TH_HIGH = 10;
@@ -1155,167 +1197,8 @@ function setFlowNode(id, level, value, unit) {
     badge.textContent = (level ? (level === "low" ? "✓ OK" : level.toUpperCase()) : "Pending");
 }
 
-function updateDecisionTree() {
-  const rank = l => (l==="high"||l==="critical") ? 3 : (l==="moderate"||l==="medium") ? 2 : l === "low" ? 1 : 0;
-  const levels = [];
-
-  // ── Source / SoSe #9 ───────────────────────────────────
-  const sourceRisk = state.source.lastRisk;
-  const sourcePred = state.source.lastPrediction;
-  const sourceLevel = sourceRisk?.overall_risk?.class || null;
-  setFlowNode("flow-source", sourceLevel, sourcePred, "FTU");
-  if (sourceLevel) levels.push(sourceLevel);
-
-  // ── Coagulation ──────────────────────────────────────────
-  const coagPred = state.coagulation.lastPrediction;
-  const coagLevel = coagPred != null
-    ? _levelFromValue(coagPred, {low: COAG_LOW, high: COAG_HIGH})
-    : (state.coagulation.lastRisk?.traffic_light?.level || null);
-  setFlowNode("flow-coag", coagLevel, coagPred, "NTU");
-  if (coagLevel) levels.push(coagLevel);
-
-  const rlData = null;
-  setFlowNode("flow-rl", "low", state.rl5.lastInput?.recommended_fecl3_dose, "mg/L advisory");
-
-  // ── CT (SoSe #10) ────────────────────────────────────────
-  const ctPred = state.ozonation.ctPrediction;
-  const ctLevel = ctPred != null
-    ? _levelFromValue(ctPred, {low: CT_TH, high: CT_TH + 0.3, invert: true})
-    : (state.ozonation.operationalRisk?.ct_indicator?.level || null);
-  setFlowNode("flow-ct", ctLevel, ctPred, "mg/L·min");
-  if (ctLevel) levels.push(ctLevel);
-
-  // ── Bromate (SoSe #10.1) ─────────────────────────────────
-  const brPred = state.ozonation.bromatePrediction;
-  const brLevel = brPred != null
-    ? _levelFromValue(brPred, {low: BROMATE_TH_LOW, high: BROMATE_TH_HIGH})
-    : (state.ozonation.operationalRisk?.bromate_indicator?.level || null);
-  setFlowNode("flow-bromate", brLevel, brPred, "µg/L");
-  if (brLevel) levels.push(brLevel);
-
-  // ── Coliform (SoSe #10.2) ────────────────────────────────
-  const colPred = state.ozonation.coliformPrediction;
-  const colLevel = colPred != null
-    ? _levelFromValue(colPred, {low: COLIFORM_TH_LOW, high: COLIFORM_TH_HIGH, invert: true})
-    : (state.ozonation.operationalRisk?.coliform_indicator?.level || null);
-  setFlowNode("flow-coliform", colLevel, colPred, "log removal");
-  if (colLevel) levels.push(colLevel);
-
-  // ── Distribution / SoSe #11 ─────────────────────────────
-  const distRisk = state.distribution.lastRisk;
-  const distPred = distRisk?.prediction;
-  const distLevel = distRisk?.overall_risk?.class || null;
-  setFlowNode("flow-dist", distLevel, distPred, "probability");
-  if (distLevel) levels.push(distLevel);
-
-  // ── Overall system node ───────────────────────────────────
-  if (levels.length) {
-    const systemLevel = levels.reduce((w, l) => rank(l) > rank(w) ? l : w, "low");
-    setFlowNode("flow-system", systemLevel, null, null);
-    const sysVal = document.getElementById("flow-system-val");
-    if (sysVal) sysVal.textContent = `${levels.length} sensor${levels.length>1?"s":""} active`;
-  }
-
-  // ── Intervention pathway support ──────────────────────────
-  updateInterventionTree(coagLevel, brLevel, colLevel, ctLevel, rlData);
-  updateRiskDashboard();
-}
-
-function updateInterventionTree(coagLevel, brLevel, colLevel, ctLevel, rlData) {
-  const rlLevel = null;
-
-  function setDt(id, level, value, unit, message) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    const mod = _rcClass(level || "pending");
-    el.className = el.className.replace(/dt--\w+/g, "").trim() + ` dt--${mod}`;
-    const valEl = el.querySelector(".dt-val");
-    const msgEl = el.querySelector(".dt-msg");
-    if (valEl && value != null)
-      valEl.textContent = (typeof value === "number" ? value.toFixed(2) : value) + (unit ? ` ${unit}` : "");
-    if (msgEl && message) msgEl.textContent = message;
-  }
-
-  function showAction(id, show, message) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.style.display = show ? "block" : "none";
-    if (message) {
-      const m = el.querySelector(".dt-action-msg");
-      if (m) m.textContent = message;
-    }
-  }
-
-  const coagPred = state.coagulation.lastPrediction;
-  const brPred   = state.ozonation.bromatePrediction;
-  const colPred  = state.ozonation.coliformPrediction;
-  const ctPred   = state.ozonation.ctPrediction;
-  const rlRec    = state.rl5.lastInput?.recommended_fecl3_dose;
-
-  // Treatment check
-  setDt("dt-treatment-check", coagLevel,
-    coagPred, "NTU",
-    coagPred != null ? `Outlet turbidity: ${coagPred.toFixed(2)} NTU (limit: ${COAG_LOW} NTU)` : null);
-  showAction("dt-action-coag", coagLevel === "moderate" || coagLevel === "high",
-    rlRec != null ? `Adjust FeCl₃ dose. RL #5 recommends ${rlRec.toFixed(2)} mg/L.` : "Adjust FeCl₃ dosage. Check flocculation.");
-
-  // Ozonation check — use worst of bromate/coliform/ct
-  const rank = l => l==="high"?3:l==="moderate"?2:l==="low"?1:0;
-  const ozLevels = [brLevel, colLevel, ctLevel].filter(Boolean);
-  const ozWorst = ozLevels.length ? ozLevels.reduce((w,l)=>rank(l)>rank(w)?l:w,"low") : null;
-  setDt("dt-ozonation-check", ozWorst,
-    null, null,
-    (() => {
-      if (!ozLevels.length) return null;
-      const parts = [];
-      if (brPred != null) parts.push(`Bromate: ${brPred.toFixed(2)} µg/L`);
-      if (ctPred != null) parts.push(`CT: ${ctPred.toFixed(3)} mg/L·min`);
-      if (colPred != null) parts.push(`Microbial log-removal: ${colPred.toFixed(3)}`);
-      return parts.join(" · ");
-    })());
-
-  // Trade-off
-  const tradeOff = brLevel === "high" && colLevel === "high";
-  showAction("dt-action-ozon-tradeoff", tradeOff,
-    "TRADE-OFF: Bromate is high and disinfection is insufficient. Do not change ozone dose automatically. Escalate to operator review.");
-  showAction("dt-action-ozon-bromate", !tradeOff && brLevel === "high",
-    `Bromate ${brPred?.toFixed(2)} µg/L exceeds EU limit (10 µg/L). Optimise ozone dose, check bromide/pH/temperature.`);
-  showAction("dt-action-ozon-coliform", !tradeOff && colLevel === "high",
-    `Microbial log-removal ${colPred?.toFixed(3)} is insufficient (<0.85). Improve CT/disinfection only after bromate review.`);
-  showAction("dt-action-ozon-ok", !tradeOff && ozLevels.length > 0 && ozWorst === "low", null);
-
-  // ── Update all decision oval nodes ─────────────────────
-  function setOval(id, level, val, unit) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.className = "dt-oval" + (level ? ` dt--${_rcClass(level)}` : " dt--pending");
-    const v = el.querySelector(".dt-val");
-    if (v && val != null)
-      v.textContent = (typeof val === "number" ? val.toFixed(2) : val) + (unit ? ` ${unit}` : "");
-  }
-
-  setOval("dt-treatment-check", coagLevel, coagPred, "NTU");
-  const ozWorst2 = ozLevels.length ? ozLevels.reduce((w,l)=>rank(l)>rank(w)?l:w,"low") : null;
-  setOval("dt-ozonation-check", ozWorst2,
-    brPred != null && ctPred != null ? `Br ${brPred.toFixed(1)} µg/L · CT ${ctPred.toFixed(2)} · Col ${colPred?.toFixed(2)}` : null, "");
-
-  // ── Customer node ─────────────────────────────────────
-  const allLevels = [coagLevel, brLevel, colLevel, ctLevel].filter(Boolean);
-  const customerLevel = allLevels.length ? allLevels.reduce((w,l)=>rank(l)>rank(w)?l:w,"low") : null;
-  const customerEl = document.getElementById("dt-customer");
-  const customerMsg = document.getElementById("dt-customer-msg");
-  if (customerEl && customerLevel) {
-    customerEl.className = `dt-final dt--${_rcClass(customerLevel)}`;
-    if (customerMsg) {
-      customerMsg.textContent = customerLevel === "low"
-        ? "&#10003; All parameters within operational limits. Safe water delivery."
-        : customerLevel === "moderate"
-        ? "&#9888; Monitor closely. Some parameters in warning zone."
-        : "&#128308; Immediate attention required. See intervention recommendations.";
-    }
-  }
-}
-
+// The legacy rigid intervention decision tree was removed. Active intervention
+// pathways are generated by renderRiskDashboardPathway().
 function updateRiskOverview() {
   const grid  = document.getElementById("risk-overview-grid");
   const matEl = document.getElementById("risk-overview-matrix");
@@ -1337,7 +1220,7 @@ function updateRiskOverview() {
     if (op.coliform_indicator) entries.push({ key:"col", label:"Microbial removal",  data: _opIndicatorToRisk(op.coliform_indicator, "Microbial removal") });
   }
   if (state.distribution.lastRisk)
-    entries.push({ key:"dist", label:"SoSe #11 &middot; Distribution", data: state.distribution.lastRisk });
+    entries.push({ key:"dist", label:"Distribution biological stability", data: state.distribution.lastRisk });
 
   if (!entries.length) {
     grid.innerHTML = `<article class="panel risk-overview-placeholder">No active sensor risk assessments are available yet.</article>`;
@@ -1388,7 +1271,6 @@ function updateRiskOverview() {
     renderInlineOzonationRisk(state.ozonation.operationalRisk, "risk-overview-ozon");
 
   updateRiskTables();
-  updateDecisionTree();
   updateRiskDashboard();
 }
 
@@ -1443,14 +1325,17 @@ function _riskLevelText(level) {
 }
 
 function _riskTimestamp(ts) {
-  if (!ts) return "latest available";
+  if (!ts) return "timestamp unavailable";
   try {
-    return new Date(ts).toLocaleString([], {
+    const parsed = new Date(ts);
+    const shown = parsed.toLocaleString([], {
       day: "2-digit",
       month: "2-digit",
       hour: "2-digit",
       minute: "2-digit"
     });
+    const ageMinutes = Math.max(0, Math.round((Date.now() - parsed.getTime()) / 60000));
+    return `${shown} · ${ageMinutes < 1 ? "fresh (<1 min)" : `${ageMinutes} min old`}`;
   } catch (_) {
     return ts;
   }
@@ -1474,15 +1359,15 @@ function _maxRiskLevel(levels) {
 }
 
 function _riskDashboardEntries() {
-  const nowLabel = "live dashboard";
   const entries = [];
 
   const source = state.source.lastRisk;
   entries.push({
     id: "source",
-    short: "SoSe #9",
-    title: "Inlet Turbidity Prediction — SoSe #9",
-    processName: "Source Monitoring — SoSe #9",
+    short: "Intake",
+    title: "Inlet Turbidity Prediction",
+    processName: "Source Monitoring",
+    modelId: "Soft sensor: SoSe #9",
     predictionLabel: "Predicted Turbidity",
     prediction: state.source.lastPrediction,
     unit: "FTU",
@@ -1495,6 +1380,7 @@ function _riskDashboardEntries() {
       ? "Increased coagulation demand may be expected if the forecast continues to rise."
       : "Source-water quality is not currently driving operational concern.",
     action: source?.short_term_actions?.[0] || "Continue routine monitoring of raw water quality.",
+    longAction: source?.long_term_actions?.[0] || "Review long-term source-water trends and model performance.",
     likelihood: source?.likelihood?.score || 1,
     severity: source?.severity?.score || 1,
     timestamp: _riskTimestamp(state.source.lastTimestamp),
@@ -1503,9 +1389,10 @@ function _riskDashboardEntries() {
   const coag = state.coagulation.lastRisk;
   entries.push({
     id: "coag",
-    short: "SoSe #8",
-    title: "Outlet Turbidity After Coagulation/Sedimentation — SoSe #8",
-    processName: "Coagulation, Flocculation and Sedimentation — SoSe #8",
+    short: "Coag.",
+    title: "Outlet Turbidity After Coagulation/Sedimentation",
+    processName: "Coagulation, Flocculation and Sedimentation",
+    modelId: "Soft sensor: SoSe #8",
     predictionLabel: "Predicted Outlet Turbidity",
     prediction: state.coagulation.lastPrediction ?? coag?.prediction,
     unit: "NTU",
@@ -1518,18 +1405,20 @@ function _riskDashboardEntries() {
       ? "Treatment performance is in a warning zone; filter loading may increase."
       : "Coagulation is not currently increasing downstream risk.",
     action: coag?.short_term_actions?.[0] || "Maintain routine turbidity and filter-performance monitoring.",
+    longAction: coag?.long_term_actions?.[0] || "Review coagulation performance trends and model calibration.",
     likelihood: coag?.likelihood?.score || coag?.risk_table_row?.likelihood_num || 1,
     severity: coag?.severity?.score || coag?.risk_table_row?.severity_num || 1,
-    timestamp: nowLabel,
+    timestamp: _riskTimestamp(state.coagulation.lastTimestamp || coag?.reliability?.observed_at),
   });
 
   const oz = state.ozonation.operationalRisk;
   const ozRisk = oz?.overall_risk?.class || "Low";
   entries.push({
     id: "oz",
-    short: "SoSe #10",
-    title: "Ozonation Decision Support — SoSe #10 / #10.1 / #10.2",
-    processName: "Ozonation — SoSe #10 / #10.1 / #10.2",
+    short: "Ozone",
+    title: "Ozonation Decision Support",
+    processName: "Ozonation",
+    modelId: "Soft sensors: SoSe #10 / #10.1 / #10.2",
     predictionLabel: "CT / Bromate / Microbial removal",
     prediction: null,
     unit: "",
@@ -1547,6 +1436,7 @@ function _riskDashboardEntries() {
       ? "Ozonation conditions require closer monitoring before intervention."
       : "Ozonation is not currently driving system risk.",
     action: oz?.short_term_actions?.[0] || "Maintain routine monitoring of ozone residual, bromate, and microbial removal.",
+    longAction: oz?.long_term_actions?.[0] || "Review long-term ozonation performance, calibration, and by-product trends.",
     likelihood: Math.max(
       oz?.severity_likelihood_matrix?.bromate?.likelihood || 1,
       oz?.severity_likelihood_matrix?.ct?.likelihood || 1,
@@ -1557,15 +1447,16 @@ function _riskDashboardEntries() {
       oz?.severity_likelihood_matrix?.ct?.severity || 1,
       oz?.severity_likelihood_matrix?.coliform?.severity || 1
     ),
-    timestamp: nowLabel,
+    timestamp: _riskTimestamp(state.ozonation.lastTimestamp),
   });
 
   const dist = state.distribution.lastRisk;
   entries.push({
     id: "dist",
-    short: "SoSe #11",
-    title: "SoSe #11 - Distribution Risk",
-    processName: "Distribution — SoSe #11",
+    short: "Dist.",
+    title: "Distribution Biological-Stability Risk",
+    processName: "Distribution Biological-Stability Monitoring",
+    modelId: "Soft sensor: SoSe #11 (under evaluation)",
     predictionLabel: "Aeromonas Prediction",
     prediction: dist?.prediction,
     unit: "probability",
@@ -1578,9 +1469,10 @@ function _riskDashboardEntries() {
       ? "Distribution conditions should be watched for biological instability."
       : "Distribution is not currently driving source-to-tap risk.",
     action: dist?.short_term_actions?.[0] || "Maintain routine distribution monitoring.",
+    longAction: dist?.long_term_actions?.[0] || "Review long-term biological-stability trends across the distribution network.",
     likelihood: dist?.likelihood?.score || 1,
     severity: dist?.severity?.score || 1,
-    timestamp: nowLabel,
+    timestamp: _riskTimestamp(state.distribution.lastTimestamp || dist?.reliability?.observed_at),
   });
 
   return entries;
@@ -1603,25 +1495,44 @@ function renderRiskDashboardFlow() {
     .map(e => e.risk);
   const systemRisk = _maxRiskLevel(activeLevels);
   const nodes = [
-    { stage: "Intake", name: "Raw Water", risk: "Low", value: "Source-water intake", timestamp: "live dashboard" },
     ...flowEntries.map(e => ({
       stage: e.short,
-      name: e.processName,
+      name: e.id === "source" ? "Raw Water Intake and Source Monitoring" : e.processName,
       risk: e.risk,
-      value: `${e.predictionLabel}: ${e.displayPrediction || _formatRiskValue(e.prediction, e.unit, e.id === "source" ? 3 : 2)}`,
+      value: e.id === "source"
+        ? `RIWA hard sensors + SoSe #9 | ${e.predictionLabel}: ${e.displayPrediction || _formatRiskValue(e.prediction, e.unit, 3)}`
+        : `${e.predictionLabel}: ${e.displayPrediction || _formatRiskValue(e.prediction, e.unit, 2)}`,
       timestamp: e.timestamp,
+      action: e.action,
+      longAction: e.longAction,
+      image: e.id === "source" ? "/static/ui/assets/risk_intake_lek_canal.png"
+        : e.id === "coag" ? "/static/ui/assets/sose8_fecl3_tank.png"
+        : e.id === "oz" ? "/static/ui/assets/ozonation_o3_chamber.png"
+        : e.id === "dist" ? "/static/ui/assets/risk_distribution_network.png"
+        : null,
+      imageAlt: e.id === "source" ? "Lek Canal raw-water intake"
+        : e.id === "coag" ? "Coagulation and flocculation tank"
+        : e.id === "oz" ? "Ozone contact chambers"
+        : e.id === "dist" ? "Drinking-water distribution network"
+        : "",
     })),
-    { stage: "Decision", name: "Risk Assessment", risk: systemRisk, value: `Overall: ${_riskLevelText(systemRisk)} Risk`, timestamp: "live dashboard" },
-    { stage: "Outcome", name: "Safe Drinking Water", risk: systemRisk, value: _rcClass(systemRisk) === "high" ? "Intervention required before confidence is restored" : "Operationally acceptable", timestamp: "live dashboard" },
+    { stage: "Decision", name: "Risk Assessment", risk: systemRisk, value: `Overall: ${_riskLevelText(systemRisk)} Risk`, timestamp: "derived from component timestamps above" },
+    { stage: "Outcome", name: "Safe Drinking Water", risk: systemRisk, value: _rcClass(systemRisk) === "high" ? "Intervention required before confidence is restored" : "Operationally acceptable", timestamp: "derived decision-support status" },
   ];
 
   el.innerHTML = nodes.map(node => {
     const mod = _rcClass(node.risk);
     return `<div class="risk-chain-node risk-node--${mod}">
+      ${node.image ? `<img class="risk-chain-image" src="${node.image}" alt="${escapeHtml(node.imageAlt)}">` : ""}
       <div class="risk-chain-stage">${escapeHtml(node.stage)}</div>
       <div class="risk-chain-name">${escapeHtml(node.name)}</div>
       <div class="risk-chain-risk">Risk: ${escapeHtml(_riskLevelText(node.risk))}</div>
       <div class="risk-chain-value">${escapeHtml(node.value)}</div>
+      ${mod === "moderate" || mod === "high" ? `<div class="risk-chain-advice risk-chain-advice--${mod}">
+        <strong>${mod === "high" ? "Action required" : "Preventive attention"}</strong>
+        <span>${escapeHtml(node.action || "Review the affected process and increase monitoring.")}</span>
+        <small>Long term: ${escapeHtml(node.longAction || "Review trends and preventive controls.")}</small>
+      </div>` : ""}
       <div class="risk-chain-time">Timestamp: ${escapeHtml(node.timestamp)}</div>
     </div>`;
   }).join("");
@@ -1636,6 +1547,7 @@ function renderRiskDashboardCards() {
     const mod = _rcClass(e.risk);
     return `<article class="risk-summary-card risk-node--${mod}">
       <h5>${escapeHtml(e.title)}</h5>
+      <div class="muted-hint">${escapeHtml(e.modelId || "")}</div>
       <div class="risk-summary-row"><span>Prediction</span><strong>${escapeHtml(e.displayPrediction || _formatRiskValue(e.prediction, e.unit, e.id === "source" ? 3 : 2))}</strong></div>
       <div class="risk-summary-row"><span>Risk</span><strong>${escapeHtml(_riskLevelText(e.risk))}</strong></div>
       <div class="risk-summary-row"><span>Threshold used</span><strong>${escapeHtml(e.threshold)}</strong></div>
@@ -1658,23 +1570,25 @@ function renderRiskDashboardMatrix() {
   const el = document.getElementById("risk-dashboard-matrix");
   if (!el) return;
   const entries = _riskDashboardEntries();
-  const cellData = Array.from({ length: 5 }, () => Array.from({ length: 5 }, () => []));
+  // Four severity rows: the former negligible/minor rows are merged into Low.
+  const severityValues = [5, 4, 3, 1];
+  const cellData = Array.from({ length: 4 }, () => Array.from({ length: 5 }, () => []));
 
   entries.forEach(e => {
     const likelihood = _toFivePointScore(e.likelihood, e.risk);
     const severity = _toFivePointScore(e.severity, e.risk);
-    const row = 5 - severity;
+    const row = severity >= 5 ? 0 : severity === 4 ? 1 : severity === 3 ? 2 : 3;
     const col = likelihood - 1;
     cellData[row][col].push(e);
   });
 
   const likelihoodLabels = ["1 Very unlikely", "2 Unlikely", "3 Possible", "4 Likely", "5 Almost certain"];
-  const severityLabels = ["5 Critical", "4 Major", "3 Moderate", "2 Low", "1 Low"];
+  const severityLabels = ["5 Critical", "4 Major", "3 Moderate", "1–2 Low (merged)"];
 
   const rows = cellData.map((rowCells, r) => `<tr>
     <th>${severityLabels[r]}</th>
     ${rowCells.map((items, c) => {
-      const score = (5 - r) * (c + 1);
+      const score = severityValues[r] * (c + 1);
       const cls = score >= 15 ? "matrix--high" : score >= 6 ? "matrix--medium" : "";
       return `<td class="risk-matrix-cell ${cls}">
         ${items.map(item => `<span class="risk-marker risk-node--${_rcClass(item.risk)}">${escapeHtml(item.short)}</span>`).join("")}
@@ -1798,7 +1712,7 @@ function updateRiskTables() {
       if (op[k]) pushRisk(k.replace("_indicator","").replace("_"," ").toUpperCase(), _opIndicatorToRisk(op[k], k));
     });
   }
-  pushRisk("SoSe #11 Distribution", state.distribution.lastRisk);
+  pushRisk("Distribution biological stability", state.distribution.lastRisk);
 
   const shortEl = document.getElementById("risk-system-short-table");
   const longEl  = document.getElementById("risk-system-long-table");
@@ -1886,6 +1800,135 @@ const OZ_HISTORY_MAX = 30;
 let ctHistoryLabels = [], ctHistoryPred = [], ctHistoryRef = [];
 let bromateHistoryLabels = [], bromateHistoryPred = [];
 let coliformHistoryLabels = [], coliformHistoryPred = [];
+const CT_HISTORY_STORAGE_KEY = "todrinq.ct.hourly-history.v1";
+
+function ctHourKey(value) {
+  // Mock-PIMS historically returned naive UTC timestamps. Treat an ISO string
+  // without Z/offset as UTC so browser-local hour slots remain correct.
+  const normalized = typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) &&
+    !/(Z|[+-]\d{2}:?\d{2})$/i.test(value)
+      ? `${value}Z`
+      : value;
+  const date = new Date(normalized);
+  date.setMinutes(0, 0, 0);
+  return date.toISOString();
+}
+
+function loadStoredCTHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CT_HISTORY_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter(item => item?.timestamp && Number.isFinite(Number(item.prediction))) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function renderCTHourlyHistory(entries = loadStoredCTHistory()) {
+  const normalized = entries.map(item => ({
+    ...item,
+    prediction: Number(item.prediction ?? item.value),
+    kind: item.kind || "prediction",
+  })).filter(item => item.timestamp && Number.isFinite(item.prediction));
+  const predictions = normalized.filter(item => item.kind === "prediction");
+  const measurementByTime = new Map();
+  normalized.filter(item => item.kind === "measurement")
+    .forEach(item => measurementByTime.set(new Date(item.timestamp).getTime(), item));
+  const measurements = Array.from(measurementByTime.values()).slice(-5);
+  const predictionByTime = new Map(predictions.map(item => [new Date(item.timestamp).getTime(), item]));
+  const validationPairs = measurements.map(measurement => ({
+    timestamp: measurement.timestamp,
+    measured: measurement.prediction,
+    predicted: predictionByTime.get(new Date(measurement.timestamp).getTime())?.prediction ?? null,
+    source: measurement.source,
+  }));
+  const nowCutoff = Date.now() - 2 * 60 * 60 * 1000;
+  const current = predictions.filter(item => new Date(item.timestamp).getTime() >= nowCutoff).at(-1) || predictions.at(-1);
+  const dateLabel = value => new Date(value).toLocaleDateString([], { day: "2-digit", month: "short" });
+  ctHistoryLabels = [...validationPairs.map(item => dateLabel(item.timestamp)), "NOW"];
+  ctHistoryPred = [...validationPairs.map(item => item.predicted), current?.prediction ?? null];
+  const measuredValues = [...validationPairs.map(item => item.measured), null];
+  ctHistoryRef = ctHistoryLabels.map(() => 1.2);
+
+  if (charts?.ctHistory) {
+    charts.ctHistory.data.labels = ctHistoryLabels;
+    charts.ctHistory.data.datasets[0].data = ctHistoryPred;
+    charts.ctHistory.data.datasets[1].data = measuredValues;
+    charts.ctHistory.data.datasets[2].data = ctHistoryRef;
+    charts.ctHistory.update();
+  }
+
+  const clock = document.getElementById("ct-history-clock");
+  if (clock) {
+    const currentValue = current ? `${Number(current.prediction).toFixed(3)} mg*min/L` : "Awaiting current prediction";
+    const previous = validationPairs.map(item => {
+      const sourceLabel = item.source?.startsWith("mock") ? "<em>MOCK SAMPLE</em>" : "<em>MEASURED</em>";
+      const predictionText = item.predicted == null ? "prediction unavailable" : `Pred ${Number(item.predicted).toFixed(3)}`;
+      return `<div class="ct-previous-slot"><span>${dateLabel(item.timestamp)}</span><strong>${predictionText}<br>Measured ${Number(item.measured).toFixed(3)}</strong>${sourceLabel}</div>`;
+    }).join("");
+    const issuedAt = current?.timestamp
+      ? new Date(/(Z|[+-]\d{2}:?\d{2})$/i.test(current.timestamp) ? current.timestamp : `${current.timestamp}Z`).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : "not issued yet";
+    clock.innerHTML = `<div class="ct-current-focus">
+      <span class="clock">🕒</span>
+      <span class="copy"><small>NOW · <span id="ct-now-live-clock">${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span></small><strong>${currentValue}</strong><small>Prediction issued: ${issuedAt}</small></span>
+    </div><div class="ct-previous-strip ct-five-samples">${previous || "<div class='placeholder-box'>Awaiting CT validation samples.</div>"}</div>`;
+  }
+}
+
+function updateCTNowClock() {
+  const element = document.getElementById("ct-now-live-clock");
+  if (element) {
+    element.textContent = new Date().toLocaleTimeString([], {
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+  }
+}
+setInterval(updateCTNowClock, 1000);
+
+function recordCTHourlyPrediction(prediction, timestamp) {
+  if (!Number.isFinite(Number(prediction))) return;
+  const entries = loadStoredCTHistory();
+  const key = ctHourKey(timestamp || new Date());
+  const next = entries.filter(item => ctHourKey(item.timestamp) !== key);
+  next.push({ timestamp: timestamp || new Date().toISOString(), prediction: Number(prediction) });
+  next.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const retained = next.slice(-48);
+  try { localStorage.setItem(CT_HISTORY_STORAGE_KEY, JSON.stringify(retained)); } catch (_) {}
+  renderCTHourlyHistory(retained);
+}
+
+async function loadCTDatabaseHistory() {
+  try {
+    const data = await getJSON(ENDPOINTS.ctObservationHistory);
+    const entries = (data.items || []).map(item => ({
+      timestamp: item.observed_at,
+      value: Number(item.value),
+      kind: item.kind,
+      source: item.source,
+    }));
+    renderCTHourlyHistory(entries);
+  } catch (error) {
+    console.warn("CT database history unavailable; using browser cache.", error);
+    renderCTHourlyHistory();
+  }
+}
+
+document.getElementById("btn-ct-mock-history")?.addEventListener("click", async () => {
+  const button = document.getElementById("btn-ct-mock-history");
+  try {
+    if (button) button.disabled = true;
+    setBadge("ct-history-mode-badge", "History: generating mock PIMS…", "info");
+    await postJSON(ENDPOINTS.treatmentCTMockHistory, {});
+    await loadCTDatabaseHistory();
+    setBadge("ct-history-mode-badge", "History: MOCK PIMS demonstration", "info");
+  } catch (error) {
+    setBadge("ct-history-mode-badge", "History: mock generation error", "high");
+    alert("CT mock history failed: " + error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
 
 function pushOzonationHistory(chart, labelsArr, label, predsArr, pred, refArr, ref) {
   const ts = label || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -1974,6 +2017,29 @@ function makeDoughnutChart(canvasId) {
 function makeCTHistoryChart(canvasId) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
+  const nowDividerPlugin = {
+    id: "ctNowDivider",
+    afterDatasetsDraw(chart) {
+      const xScale = chart.scales.x;
+      const chartArea = chart.chartArea;
+      const lastIndex = chart.data.labels.length - 1;
+      if (!xScale || !chartArea || lastIndex < 0) return;
+      const nowX = xScale.getPixelForValue(lastIndex);
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.strokeStyle = "#10233f";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(nowX, chartArea.top);
+      ctx.lineTo(nowX, chartArea.bottom);
+      ctx.stroke();
+      ctx.fillStyle = "#10233f";
+      ctx.font = "700 11px sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText("NOW", nowX - 5, chartArea.top + 13);
+      ctx.restore();
+    }
+  };
   return new Chart(canvas.getContext("2d"), {
     type: "line",
     data: {
@@ -1987,11 +2053,24 @@ function makeCTHistoryChart(canvasId) {
           borderWidth: 2,
           tension: 0.35,
           fill: false,
-          pointRadius: 3,
+          pointRadius: context => context.dataIndex === context.dataset.data.length - 1 ? 7 : 3,
+          pointBorderWidth: context => context.dataIndex === context.dataset.data.length - 1 ? 3 : 1,
+          pointBorderColor: "#ffffff",
           pointBackgroundColor: "#e67e22"
         },
         {
-          label: "EPA CT (ref.)",
+          label: "Measured CT (10-day sample)",
+          data: [],
+          borderColor: "#08a6bd",
+          backgroundColor: "#08a6bd",
+          borderWidth: 0,
+          showLine: false,
+          pointRadius: 7,
+          pointStyle: "rectRot",
+          pointBackgroundColor: "#08a6bd"
+        },
+        {
+          label: "Provisional 1.2 validation line",
           data: [],
           borderColor: "#2980b9",
           backgroundColor: "transparent",
@@ -2010,15 +2089,131 @@ function makeCTHistoryChart(canvasId) {
       plugins: { legend: { display: true, position: "top" } },
       scales: {
         y: { title: { display: true, text: "CT Value (mg/L·min)" } },
-        x: { title: { display: true, text: "Time" }, ticks: { maxTicksLimit: 8 } }
+        x: { title: { display: true, text: "Five 10-day validation samples across 50 days → NOW" }, ticks: { maxTicksLimit: 8 } }
       }
-    }
+    },
+    plugins: [nowDividerPlugin]
+  });
+}
+
+function renderBromateDatabaseHistory(items = []) {
+  const parseTimestamp = value => {
+    const normalized = typeof value === "string" &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) &&
+      !/(Z|[+-]\d{2}:?\d{2})$/i.test(value) ? `${value}Z` : value;
+    return new Date(normalized);
+  };
+  const predictions = items
+    .filter(item => item.kind === "prediction" && Number.isFinite(Number(item.value)))
+    .sort((a, b) => parseTimestamp(a.observed_at) - parseTimestamp(b.observed_at));
+  // A user may press Run more than once during an hour. Keep only the latest
+  // stored prediction for each clock-hour so the operational chart remains hourly.
+  const latestByHour = new Map();
+  predictions.forEach(item => {
+    const date = parseTimestamp(item.observed_at);
+    date.setMinutes(0, 0, 0);
+    latestByHour.set(date.getTime(), Number(item.value));
+  });
+  const now = new Date();
+  now.setMinutes(0, 0, 0);
+  const hours = Array.from({ length: 7 }, (_, index) => new Date(now.getTime() + (index - 6) * 60 * 60 * 1000));
+  bromateHistoryLabels = hours.map((date, index) => index === hours.length - 1
+    ? "NOW"
+    : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+  bromateHistoryPred = hours.map(date => latestByHour.get(date.getTime()) ?? null);
+  if (charts?.bromateHistory) {
+    charts.bromateHistory.data.labels = bromateHistoryLabels;
+    charts.bromateHistory.data.datasets[0].data = bromateHistoryPred;
+    charts.bromateHistory.update();
+  }
+}
+
+async function loadBromateDatabaseHistory() {
+  try {
+    const data = await getJSON(ENDPOINTS.bromateObservationHistory);
+    renderBromateDatabaseHistory(data.items || []);
+    setBadge("bromate-history-badge", "History: stored predictions", "info");
+  } catch (error) {
+    console.warn("Bromate database history unavailable.", error);
+    setBadge("bromate-history-badge", "History unavailable", "high");
+  }
+}
+
+function updateBromateClock() {
+  const element = document.getElementById("bromate-now-clock");
+  if (element) element.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+setInterval(updateBromateClock, 1000);
+
+function makeCoagulationHistoryChart(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  const nowMarker = {
+    id: "coagulationNowMarker",
+    afterDatasetsDraw(chart) {
+      const labels = chart.data.labels || [];
+      if (!labels.length) return;
+      const { ctx, chartArea, scales } = chart;
+      const nowX = scales.x.getPixelForValue(labels.length - 1);
+      ctx.save();
+      ctx.strokeStyle = "#0d1f3c";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(nowX, chartArea.top);
+      ctx.lineTo(nowX, chartArea.bottom);
+      ctx.stroke();
+      ctx.fillStyle = "#0d1f3c";
+      ctx.font = "700 11px sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText("NOW", nowX - 6, chartArea.top + 14);
+      ctx.restore();
+    },
+  };
+  return new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [
+        { label: "Predicted outlet turbidity", data: [], borderColor: "#ed7d1a", backgroundColor: "rgba(237,125,26,.10)", borderWidth: 3, pointRadius: 5, tension: .25 },
+        { label: "Measured outlet turbidity", data: [], borderColor: "#08a9bd", backgroundColor: "#08a9bd", borderWidth: 0, pointRadius: 6, pointStyle: "rectRot", showLine: false },
+        { label: "Operator reference (6 FTU)", data: [], borderColor: "#287fb8", borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: "Outlet turbidity (NTU / model output)" } },
+        x: { title: { display: true, text: "Previous six hourly samples → NOW" } },
+      },
+      plugins: { legend: { position: "top" } },
+    },
+    plugins: [nowMarker],
   });
 }
 
 function makeOzonationHistoryChart(canvasId, label, color) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
+  const nowMarker = {
+    id: `${canvasId}NowMarker`,
+    afterDatasetsDraw(chart) {
+      if (canvasId !== "chart-bromate-history" || !chart.data.labels.length) return;
+      const x = chart.scales.x.getPixelForValue(chart.data.labels.length - 1);
+      const { top, bottom } = chart.chartArea;
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.strokeStyle = "#10233f";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
+      ctx.fillStyle = "#10233f";
+      ctx.font = "700 11px sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText("NOW", x - 5, top + 13);
+      ctx.restore();
+    }
+  };
   return new Chart(canvas.getContext("2d"), {
     type: "line",
     data: {
@@ -2043,29 +2238,53 @@ function makeOzonationHistoryChart(canvasId, label, color) {
         y: { title: { display: true, text: label } },
         x: { title: { display: true, text: "Time" }, ticks: { maxTicksLimit: 8 } }
       }
-    }
+    },
+    plugins: [nowMarker]
   });
 }
 
 function makeSoSe9Chart(canvasId) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
+  const nowDividerPlugin = {
+    id: "sose9NowDivider",
+    afterDatasetsDraw(chart) {
+      const xScale = chart.scales.x;
+      const chartArea = chart.chartArea;
+      if (!xScale || !chartArea || chart.data.labels.length < 7) return;
+      const nowX = xScale.getPixelForValue(6);
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.strokeStyle = "#10233f";
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(nowX, chartArea.top);
+      ctx.lineTo(nowX, chartArea.bottom);
+      ctx.stroke();
+      ctx.fillStyle = "#10233f";
+      ctx.font = "700 11px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("NOW", nowX, chartArea.top + 13);
+      ctx.restore();
+    },
+  };
   return new Chart(canvas.getContext("2d"), {
     type: "line",
     data: {
-      labels: ["\uD83D\uDD57 measurement time", "+1h primary", "+2h secondary", "+3h secondary"],
+      labels: [],
       datasets: [
         {
-          label: "Current (measured)",
-          data: [null, null, null, null],
+          label: "Actual measured at target hour",
+          data: [],
           borderColor: "#0ab4c8",
           backgroundColor: "rgba(10,180,200,0.15)",
           pointRadius: 6, pointBorderWidth: 2,
           tension: 0.3, spanGaps: false,
         },
         {
-          label: "Predicted 3h",
-          data: [null, null, null, null],
+          label: "Forecast issued 3h earlier",
+          data: [],
           borderColor: "#0d1f3c",
           backgroundColor: "rgba(13,31,60,0.12)",
           pointRadius: 6, pointBorderWidth: 2,
@@ -2073,14 +2292,15 @@ function makeSoSe9Chart(canvasId) {
           tension: 0.3, spanGaps: false,
         },
         {
-          label: "P50 reference (15 FTU)",
-          data: [15, 15, 15, 15],
-          borderColor: "#e67e22", borderWidth: 1.5,
-          borderDash: [5, 4], pointRadius: 0, fill: false,
+          label: "Current forecast to +3h target",
+          data: [],
+          borderColor: "#8e44ad", borderWidth: 2.5,
+          borderDash: [7, 4], pointRadius: 5, fill: false,
+          tension: 0, spanGaps: true,
         },
         {
           label: "Attention reference (20 FTU)",
-          data: [20, 20, 20, 20],
+          data: [],
           borderColor: "#e74c3c", borderWidth: 1.5,
           borderDash: [5, 4], pointRadius: 0, fill: false,
         },
@@ -2093,22 +2313,122 @@ function makeSoSe9Chart(canvasId) {
           title: { display: true, text: "Turbidity (FTU)", font: { size: 12 } },
           beginAtZero: true, suggestedMax: 40,
         },
-        x: { title: { display: true, text: "Time horizon" } },
+        x: { title: { display: true, text: "Actual clock time: previous 6 hours · now · prediction target +3h" } },
       },
       plugins: { legend: { position: "bottom" } },
     },
+    plugins: [nowDividerPlugin],
   });
 }
 
-function renderSoSe9Chart(currentVal, predictedVal) {
+const sose9ForecastHistory = [];
+const sose9PendingForecasts = [];
+let sose9LatestFuturePrediction = null;
+let sose9LastAutomaticHour = new Date().getHours();
+let sose9HourlyUpdatesEnabled = false;
+
+function updateSoSe9Clock() {
+  const now = new Date();
+  const target = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const formatter = new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const nowElement = document.getElementById("sose9-clock-now");
+  const targetElement = document.getElementById("sose9-clock-target");
+  if (nowElement) nowElement.textContent = formatter.format(now);
+  if (targetElement) targetElement.textContent = formatter.format(target);
+
+  // While the page remains open, execute one new source update when the real
+  // local clock enters a new hour. This keeps the six-hour window moving.
+  if (sose9HourlyUpdatesEnabled && sose9ForecastHistory.length && now.getHours() !== sose9LastAutomaticHour) {
+    sose9LastAutomaticHour = now.getHours();
+    updateSoSe9Once();
+  }
+}
+
+updateSoSe9Clock();
+setInterval(updateSoSe9Clock, 1000);
+
+function formatForecastHour(value) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(value);
+}
+
+function drawSoSe9ComparisonChart() {
   if (!charts.sose9) return;
-  charts.sose9.data.datasets[0].data = [currentVal != null ? currentVal : null, null, null, null];
-  charts.sose9.data.datasets[1].data = [null, null, null, predictedVal != null ? predictedVal : null];
+  const currentHour = new Date();
+  currentHour.setSeconds(0, 0);
+  const axisHours = Array.from({ length: 10 }, (_, index) =>
+    new Date(currentHour.getTime() + (index - 6) * 60 * 60 * 1000)
+  );
+  charts.sose9.data.labels = axisHours.map(formatForecastHour);
+  charts.sose9.data.datasets[0].data = [
+    ...sose9ForecastHistory.map((item) => item.actual ?? null), null, null, null,
+  ];
+  charts.sose9.data.datasets[1].data = [
+    ...sose9ForecastHistory.map((item) => item.predicted ?? null), null, null, null,
+  ];
+  charts.sose9.data.datasets[2].data = [
+    null, null, null, null, null, null,
+    sose9ForecastHistory.at(-1)?.actual ?? null,
+    null,
+    null,
+    sose9LatestFuturePrediction,
+  ];
+  charts.sose9.data.datasets[3].data = axisHours.map(() => 20);
   charts.sose9.update();
+}
+
+function initialiseSoSe9ComparisonHistory(samples) {
+  sose9ForecastHistory.length = 0;
+  sose9PendingForecasts.length = 0;
+  const currentHour = new Date();
+  currentHour.setMinutes(0, 0, 0);
+
+  // Ten consecutive mock/model runs represent hourly issue times from now-9h
+  // through now. A forecast at index i is paired with the actual measurement
+  // at index i+3, yielding seven aligned target hours: now-6h through now.
+  for (let i = 0; i < 7; i += 1) {
+    const targetAt = new Date(currentHour.getTime() + (i - 6) * 60 * 60 * 1000);
+    sose9ForecastHistory.push({
+      targetAt,
+      actual: samples[i + 3]?.input_summary?.sensor_turbidity,
+      predicted: samples[i]?.prediction?.turbidity_3h_ahead_FTU,
+    });
+  }
+  for (let i = 7; i < 10; i += 1) {
+    sose9PendingForecasts.push(samples[i]?.prediction?.turbidity_3h_ahead_FTU);
+  }
+  sose9LatestFuturePrediction = samples[9]?.prediction?.turbidity_3h_ahead_FTU;
+  sose9LastAutomaticHour = new Date().getHours();
+  drawSoSe9ComparisonChart();
+}
+
+function appendSoSe9ComparisonPoint(data) {
+  const previousTarget = sose9ForecastHistory.at(-1)?.targetAt || new Date();
+  const targetAt = new Date(previousTarget.getTime() + 60 * 60 * 1000);
+  const forecastForThisHour = sose9PendingForecasts.shift();
+  sose9ForecastHistory.push({
+    targetAt,
+    actual: data?.input_summary?.sensor_turbidity,
+    predicted: forecastForThisHour,
+  });
+  sose9PendingForecasts.push(data?.prediction?.turbidity_3h_ahead_FTU);
+  sose9LatestFuturePrediction = data?.prediction?.turbidity_3h_ahead_FTU;
+  while (sose9ForecastHistory.length > 7) sose9ForecastHistory.shift();
+  drawSoSe9ComparisonChart();
 }
 
 const charts = {
   coagulation: makeLineChart("chart-coagulation", "Coagulation prediction"),
+  coagulationHistory: makeCoagulationHistoryChart("chart-coagulation-history"),
   ct: makeBarChart("chart-ct", "CT"),
   bromate: makeBarChart("chart-bromate", "Bromate"),
   coliform: makeBarChart("chart-coliform", "Microbial removal"),
@@ -2122,6 +2442,10 @@ const charts = {
   bactosenseUv: makeOzonationHistoryChart("chart-bactosense-uv", "Influent/effluent UV (awaiting data)", "rgb(243,156,18)"),
   bactosenseCells: makeOzonationHistoryChart("chart-bactosense-cells", "BactoSense intact cell number (awaiting data)", "rgb(39,174,96)")
 };
+renderCTHourlyHistory();
+loadCTDatabaseHistory();
+loadCoagulationDatabaseHistory();
+loadBromateDatabaseHistory();
 
 // sose9 chart is created on first use (canvas is inside display:none screen at load time)
 charts.sose9 = null;
@@ -2220,7 +2544,17 @@ async function updateSoSe9Once() {
       charts.sose9 = makeSoSe9Chart("sose9-chart");
     }
 
-    const data      = await getJSON(ENDPOINTS.sose9Live);
+    let data;
+    if (sose9ForecastHistory.length === 0) {
+      const samples = await Promise.all(
+        Array.from({ length: 10 }, () => getJSON(ENDPOINTS.sose9Live))
+      );
+      initialiseSoSe9ComparisonHistory(samples);
+      data = samples.at(-1);
+    } else {
+      data = await getJSON(ENDPOINTS.sose9Live);
+      appendSoSe9ComparisonPoint(data);
+    }
     const predicted = data?.prediction?.turbidity_3h_ahead_FTU;
     const inp       = data?.input_summary || {};
 
@@ -2241,35 +2575,33 @@ async function updateSoSe9Once() {
     setText("sose9-live-month", inp.month,             0);
     setText("sose9-live-pred",  predicted,             4);
 
-    renderSoSe9Chart(inp.sensor_turbidity, predicted);
-
-    const riskData = await postJSON(ENDPOINTS.riskSourceSose9, {
-      predicted_turbidity: predicted,
-      current_turbidity: inp.sensor_turbidity,
-      prediction_timestamp: data?.timestamp,
-      threshold: 15.0,
-      yopi_sensitive: false,
-    });
-
     state.source.lastInput = inp;
     state.source.lastPrediction = predicted;
-    state.source.lastRisk = riskData;
     state.source.lastTimestamp = data?.timestamp || null;
+    setBadge("sose9-status-badge", "Prediction stored", "info");
 
-    renderRichRisk("sose9-risk-output", riskData);
-
-    const riskClass = riskData?.overall_risk?.class || "–";
-    const riskLabel = riskData?.sose9_persistence?.operational_risk || riskClass;
-    setBadge("sose9-status-badge", `Risk: ${riskLabel}`, riskBadgeClass(riskClass));
-    updateRiskOverview();
+    // Keep risk computation available to the dedicated Risk Assessment module,
+    // without exposing risk classes or making this sensor screen depend on it.
+    try {
+      const riskData = await postJSON(ENDPOINTS.riskSourceSose9, {
+        predicted_turbidity: predicted,
+        current_turbidity: inp.sensor_turbidity,
+        prediction_timestamp: data?.timestamp,
+        threshold: 15.0,
+        yopi_sensitive: false,
+      });
+      state.source.lastRisk = riskData;
+      updateRiskOverview();
+    } catch (riskError) {
+      console.warn("Source risk refresh deferred to Risk Assessment module.", riskError);
+    }
   } catch (err) {
     setBadge("sose9-status-badge", "Error", "error");
-    const out = document.getElementById("sose9-risk-output");
-    if (out) out.innerHTML = `<pre class="json-box">${escapeHtml(err.message)}</pre>`;
   }
 }
 
 function stopSoSe9Live() {
+  sose9HourlyUpdatesEnabled = false;
   if (sose9LiveInterval) { clearInterval(sose9LiveInterval); sose9LiveInterval = null; }
   const startBtn = document.getElementById("btn-sose9-live-start");
   const stopBtn  = document.getElementById("btn-sose9-live-stop");
@@ -2287,7 +2619,13 @@ document.getElementById("btn-sose9-once")?.addEventListener("click", async () =>
 document.getElementById("btn-sose9-live-start")?.addEventListener("click", async () => {
   stopSoSe9Live();
   await updateSoSe9Once();
-  sose9LiveInterval = setInterval(updateSoSe9Once, 5000);
+  sose9HourlyUpdatesEnabled = true;
+  sose9LastAutomaticHour = new Date().getHours();
+  const startBtn = document.getElementById("btn-sose9-live-start");
+  const stopBtn = document.getElementById("btn-sose9-live-stop");
+  if (startBtn) startBtn.style.display = "none";
+  if (stopBtn) stopBtn.style.display = "";
+  setBadge("sose9-status-badge", "Hourly updates active", "info");
 });
 
 document.getElementById("btn-sose9-live-stop")?.addEventListener("click", () => {
@@ -2312,24 +2650,7 @@ document.getElementById("btn-treatment-coag-latest")?.addEventListener("click", 
 
 document.getElementById("btn-rl5-latest")?.addEventListener("click", async () => {
   try {
-    const baseInput = state.coagulation.lastInput || {
-      ftu_raw_water: 15.2,
-      fecl3_concentration: 5,
-      temperature_raw_water: 16,
-      ph_raw_water: 7.4,
-      after_dredging: 450,
-      lane: 1,
-      year: 2026
-    };
-
-    const lane = Number(baseInput.lane || 1);
-
-    const payload = {
-      ...baseInput,
-      [`flow_coagulation_${lane}`]: 1000
-    };
-
-    const data = await postJSON("/treatment/coagulation/rl", payload);
+    const data = await getJSON(ENDPOINTS.treatmentRLLatest);
     renderRL5Advisory("rl5-latest", data);
 
     const currentDose = extractNumber(data.input_data?.fecl3_concentration);
@@ -2338,9 +2659,13 @@ document.getElementById("btn-rl5-latest")?.addEventListener("click", async () =>
     const dosingFlow = extractNumber(data.recommended_fecl3_dosing_flow?.value);
 
     if (currentDose !== null) setValue("rl5_current_fecl3_dose", currentDose);
-    if (recommendedDose !== null) setValue("rl5_recommended_fecl3_dose", recommendedDose);
-    if (outputTurbidity !== null) setValue("rl5_output_turbidity", outputTurbidity);
-    if (dosingFlow !== null) setValue("rl5_dosing_flow", dosingFlow);
+    const rlInput = data.input_data || {};
+    setValue("rl5_ftu_raw_water", rlInput.ftu_raw_water);
+    setValue("rl5_temperature_raw_water", rlInput.temperature_raw_water);
+    setValue("rl5_ph_raw_water", rlInput.ph_raw_water);
+    setValue("rl5_after_dredging", rlInput.after_dredging);
+    setValue("rl5_lane", rlInput.lane);
+    setValue("rl5_year", rlInput.year);
 
     setText("rl5-current-dose-display", currentDose, 2);
     setText("rl5-recommended-dose-display", recommendedDose, 2);
@@ -2502,6 +2827,101 @@ refreshOzonationDashboard();
 // ------------------------------
 // Coagulation manual/live + automatic RL #5 update
 // ------------------------------
+function renderCoagulationStoredHistory(entries = []) {
+  const normalized = entries.map(item => ({
+    timestamp: item.observed_at || item.timestamp,
+    value: Number(item.value ?? item.prediction),
+    kind: item.kind || "prediction",
+    source: item.source || "unknown",
+  })).filter(item => item.timestamp && Number.isFinite(item.value));
+
+  const predictions = normalized.filter(item => item.kind === "prediction");
+  const current = predictions.at(-1) || null;
+  const currentTime = current ? new Date(current.timestamp).getTime() : Date.now();
+  const predictionByTime = new Map(predictions.map(item => [new Date(item.timestamp).getTime(), item]));
+  const measurementByTime = new Map();
+  normalized
+    .filter(item => item.kind === "measurement" && new Date(item.timestamp).getTime() < currentTime)
+    .forEach(item => measurementByTime.set(new Date(item.timestamp).getTime(), item));
+  const pairs = Array.from(measurementByTime.values())
+    .map(measurement => ({
+      timestamp: measurement.timestamp,
+      measured: measurement.value,
+      predicted: predictionByTime.get(new Date(measurement.timestamp).getTime())?.value ?? null,
+      source: measurement.source,
+    }))
+    .filter(item => item.predicted != null)
+    .slice(-6);
+
+  const timeLabel = value => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const labels = [...pairs.map(item => timeLabel(item.timestamp)), "NOW"];
+  const predicted = [...pairs.map(item => item.predicted), current?.value ?? null];
+  const measured = [...pairs.map(item => item.measured), null];
+
+  if (charts?.coagulationHistory) {
+    charts.coagulationHistory.data.labels = labels;
+    charts.coagulationHistory.data.datasets[0].data = predicted;
+    charts.coagulationHistory.data.datasets[1].data = measured;
+    charts.coagulationHistory.data.datasets[2].data = labels.map(() => 6);
+    charts.coagulationHistory.update();
+  }
+
+  const strip = document.getElementById("coagulation-history-strip");
+  if (strip) {
+    strip.innerHTML = pairs.length ? pairs.map(item => `
+      <div class="validation-sample">
+        <span>${timeLabel(item.timestamp)}</span>
+        <strong>Pred ${Number(item.predicted).toFixed(3)}</strong>
+        <strong>Measured ${Number(item.measured).toFixed(3)}</strong>
+        <em>${item.source.startsWith("mock") ? "MOCK PIMS" : "MEASURED"}</em>
+      </div>`).join("") : `<div class="placeholder-box">Awaiting matched outlet-turbidity samples.</div>`;
+  }
+}
+
+async function loadCoagulationDatabaseHistory() {
+  try {
+    const data = await getJSON(ENDPOINTS.coagulationObservationHistory);
+    renderCoagulationStoredHistory(data.items || []);
+    setBadge("coagulation-history-badge", "History: stored observations", "info");
+  } catch (error) {
+    console.warn("SoSe #8 database history unavailable.", error);
+    setBadge("coagulation-history-badge", "History: unavailable", "high");
+  }
+}
+
+document.getElementById("btn-coagulation-mock-history")?.addEventListener("click", async () => {
+  const button = document.getElementById("btn-coagulation-mock-history");
+  try {
+    if (button) button.disabled = true;
+    setBadge("coagulation-history-badge", "History: generating Mock PIMS samples…", "info");
+    await postJSON(ENDPOINTS.coagulationMockHistory, {});
+    await loadCoagulationDatabaseHistory();
+    setBadge("coagulation-history-badge", "History: MOCK PIMS demonstration", "info");
+  } catch (error) {
+    setBadge("coagulation-history-badge", "History: generation error", "high");
+    alert("SoSe #8 mock history failed: " + error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
+document.getElementById("btn-coagulation-run-mock")?.addEventListener("click", async () => {
+  const button = document.getElementById("btn-coagulation-run-mock");
+  try {
+    if (button) button.disabled = true;
+    setBadge("coagulation-mode-badge", "Mode: loading Mock PIMS", "info");
+    await postJSON(ENDPOINTS.coagulationMockHistory, {});
+    await updateLiveCoagulationOnce();
+    await loadCoagulationDatabaseHistory();
+    setBadge("coagulation-mode-badge", "Mode: Mock PIMS", "info");
+  } catch (error) {
+    setBadge("coagulation-badge", "Status: model error", "high");
+    alert("SoSe #8 Mock PIMS run failed: " + error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
 function stopCoagulationLiveMode() {
   if (coagulationLiveInterval) {
     clearInterval(coagulationLiveInterval);
@@ -2562,19 +2982,19 @@ document.getElementById("form-coagulation")?.addEventListener("submit", async (e
     const pred = pickPrediction(data, ["prediction"]);
     state.coagulation.lastInput = payload;
     state.coagulation.lastPrediction = pred;
-    updateDecisionTree();
+    state.coagulation.lastTimestamp = new Date().toISOString();
 
     setText("coagulation-prediction", pred, 3);
 
     const targetInfo = updateCoagulationOperationalSummary(payload, pred);
-    const status = classifyPrediction(pred, targetInfo.threshold ?? 1, (targetInfo.threshold ?? 1) + 1);
+    const status = pred <= (targetInfo.threshold ?? 1) ? "Within target" : "Above target";
 
     setText("coagulation-status", status, 0);
     setBadge("coagulation-badge", `Status: ${status}`, levelFromText(status));
     setBadge("coagulation-mode-badge", "Mode: manual", "info");
 
     const lastUpdateEl = document.getElementById("coagulation-last-update");
-    if (lastUpdateEl) lastUpdateEl.textContent = "manual";
+    if (lastUpdateEl) lastUpdateEl.textContent = new Date(state.coagulation.lastTimestamp).toLocaleString();
 
     setText("live-ftu", payload.ftu_raw_water, 2);
     setText("live-fecl3", payload.fecl3_concentration, 2);
@@ -2592,6 +3012,7 @@ document.getElementById("form-coagulation")?.addEventListener("submit", async (e
     );
 
     await runAutomaticCoagulationRisk(payload);
+    await loadCoagulationDatabaseHistory();
 
     // Same SoSe #8 / PIMS input now automatically feeds RL #5
     await updateRL5FromCoagulationInput(payload);
@@ -2616,19 +3037,16 @@ async function updateLiveCoagulationOnce() {
 
     state.coagulation.lastInput = input;
     state.coagulation.lastPrediction = pred;
+    state.coagulation.lastTimestamp = timestamp !== "–" ? timestamp : null;
 
     setText("coagulation-prediction", pred, 3);
 
     const targetInfo = updateCoagulationOperationalSummary(input, pred);
-    const status = classifyPrediction(
-      pred,
-      targetInfo.threshold ?? 1,
-      (targetInfo.threshold ?? 1) + 1
-    );
+    const status = pred <= (targetInfo.threshold ?? 1) ? "Within target" : "Above target";
 
     setText("coagulation-status", status, 0);
     setBadge("coagulation-badge", `Status: ${status}`, levelFromText(status));
-    setBadge("coagulation-mode-badge", "Mode: live", "info");
+    setBadge("coagulation-mode-badge", "Mode: demonstration (mock PIMS)", "info");
 
     const lastUpdateEl = document.getElementById("coagulation-last-update");
     if (lastUpdateEl) lastUpdateEl.textContent = timestamp;
@@ -2666,14 +3084,14 @@ async function updateLiveCoagulationOnce() {
     );
 
     await runAutomaticCoagulationRisk(input);
+    await loadCoagulationDatabaseHistory();
 
-    // Same live/mock-PIMS input now automatically feeds RL #5
+    // Same demonstration/mock-PIMS input now automatically feeds RL #5
     await updateRL5FromCoagulationInput(input);
 
   } catch (err) {
     console.error(err);
-    setBadge("coagulation-badge", "Status: live error", "high");
-    setBadge("coagulation-risk-badge", "Risk: error", "high");
+    setBadge("coagulation-badge", "Status: demonstration error", "high");
   }
 }
 
@@ -2702,14 +3120,16 @@ document.getElementById("form-ct")?.addEventListener("submit", async (e) => {
     const data = await postJSON(ENDPOINTS.treatmentCT, payload);
 
     const pred = pickPrediction(data, ["ct_prediction", "prediction"]);
-    state.ozonation.ctInput = payload;
+    const predictionTimestamp = data.timestamp || new Date().toISOString();
+    state.ozonation.ctInput = { ...payload, prediction_timestamp: predictionTimestamp };
     state.ozonation.ctPrediction = pred;
-    updateDecisionTree();
+    state.ozonation.lastTimestamp = predictionTimestamp;
 
     setText("ct-prediction", pred, 3);
 
     const status = classifyCT(pred);
     setText("ct-status", status, 0);
+    updateCTDecisionSupport(data);
 
     if (charts.ct) {
       charts.ct.data.datasets[0].data = [pred ?? 0];
@@ -2717,12 +3137,12 @@ document.getElementById("form-ct")?.addEventListener("submit", async (e) => {
     }
 
     latestOzonation.ct = pred;
-    pushOzonationHistory(charts.ctHistory, ctHistoryLabels, null, ctHistoryPred, pred, ctHistoryRef, 1.2);
+    recordCTHourlyPrediction(pred, predictionTimestamp);
     refreshOzonationDashboard();
 
     // Individual CT risk card
     try {
-      const ctRisk = await postJSON(ENDPOINTS.riskCT, payload);
+      const ctRisk = await postJSON(ENDPOINTS.riskCT, state.ozonation.ctInput);
       renderRichRisk("ct-risk-card", ctRisk);
     } catch (_) {}
 
@@ -2740,9 +3160,10 @@ document.getElementById("form-bromate")?.addEventListener("submit", async (e) =>
     const data = await postJSON(ENDPOINTS.treatmentBromate, payload);
 
     const pred = pickPrediction(data, ["bromate_prediction", "prediction"]);
-    state.ozonation.bromateInput = payload;
+    const predictionTimestamp = data.timestamp || new Date().toISOString();
+    state.ozonation.bromateInput = { ...payload, prediction_timestamp: predictionTimestamp };
     state.ozonation.bromatePrediction = pred;
-    updateDecisionTree();
+    state.ozonation.lastTimestamp = predictionTimestamp;
 
     setText("bromate-prediction", pred, 3);
 
@@ -2760,7 +3181,7 @@ document.getElementById("form-bromate")?.addEventListener("submit", async (e) =>
 
     // Individual bromate risk card
     try {
-      const brRisk = await postJSON(ENDPOINTS.riskBromate, payload);
+      const brRisk = await postJSON(ENDPOINTS.riskBromate, state.ozonation.bromateInput);
       renderRichRisk("bromate-risk-card", brRisk);
     } catch (_) {}
 
@@ -2778,14 +3199,16 @@ document.getElementById("form-coliform")?.addEventListener("submit", async (e) =
     const data = await postJSON(ENDPOINTS.treatmentColiform, payload);
 
     const pred = pickPrediction(data, ["coliform_prediction", "prediction"]);
-    state.ozonation.coliformInput = payload;
+    const predictionTimestamp = data.timestamp || new Date().toISOString();
+    state.ozonation.coliformInput = { ...payload, prediction_timestamp: predictionTimestamp };
     state.ozonation.coliformPrediction = pred;
-    updateDecisionTree();
+    state.ozonation.lastTimestamp = predictionTimestamp;
 
     setText("coliform-prediction", pred, 3);
 
     const status = classifyInverse(pred, 0.85, 1.2);
     setText("coliform-status", status, 0);
+    updateCTDecisionSupport(data);
 
     if (charts.coliform) {
       charts.coliform.data.datasets[0].data = [pred ?? 0];
@@ -2798,7 +3221,7 @@ document.getElementById("form-coliform")?.addEventListener("submit", async (e) =
 
     // Individual coliform risk card
     try {
-      const colRisk = await postJSON(ENDPOINTS.riskColiform, payload);
+      const colRisk = await postJSON(ENDPOINTS.riskColiform, state.ozonation.coliformInput);
       renderRichRisk("coliform-risk-card", colRisk);
     } catch (_) {}
 
@@ -2809,8 +3232,8 @@ document.getElementById("form-coliform")?.addEventListener("submit", async (e) =
 });
 
 // ------------------------------
-// Ozonation live mode (PIMS synthetic feed)
-// CT: real-time resolution | Bromate & Coliform: 1h resolution
+// Ozonation demonstration mode (mock PIMS synthetic feed)
+// All ozonation predictions: hourly model context.
 // ------------------------------
 let ozonationLiveInterval = null;
 
@@ -2819,7 +3242,7 @@ function stopOzonationLiveMode() {
     clearInterval(ozonationLiveInterval);
     ozonationLiveInterval = null;
   }
-  setBadge("ct-mode-badge", "Mode: manual", "info");
+  setBadge("ct-mode-badge", "Mode: manual (1h resolution)", "info");
   setBadge("bromate-mode-badge", "Mode: manual (1h res.)", "info");
   setBadge("coliform-mode-badge", "Mode: manual (1h res.)", "info");
   setBadge("ozonation-mode-badge", "Mode: manual", "info");
@@ -2830,9 +3253,10 @@ async function updateLiveOzonationOnce() {
   try {
     const ctData = await getJSON(ENDPOINTS.treatmentCTLatest);
     const ctPred = pickPrediction(ctData, ["prediction"]);
-    const ctInput = ctData.input_data;
+    const ctInput = { ...ctData.input_data, prediction_timestamp: ctData.timestamp };
     state.ozonation.ctInput = ctInput;
     state.ozonation.ctPrediction = ctPred;
+    state.ozonation.lastTimestamp = ctData.timestamp || state.ozonation.lastTimestamp;
 
     setValue("ct_Chamber", ctInput.Chamber);
     setValue("ct_WaterTemperature", ctInput.WaterTemperature);
@@ -2842,24 +3266,25 @@ async function updateLiveOzonationOnce() {
 
     setText("ct-prediction", ctPred, 3);
     setText("ct-status", classifyCT(ctPred), 0);
+    updateCTDecisionSupport(ctData);
     if (charts.ct) { charts.ct.data.datasets[0].data = [ctPred ?? 0]; charts.ct.update(); }
     latestOzonation.ct = ctPred;
-    const ctRef = 1.2;
-    pushOzonationHistory(charts.ctHistory, ctHistoryLabels, ctData.timestamp?.slice(11, 19), ctHistoryPred, ctPred, ctHistoryRef, ctRef);
-    setBadge("ct-mode-badge", `Mode: live — ${ctData.timestamp?.slice(11, 19) ?? ""}`, "info");
+    recordCTHourlyPrediction(ctPred, ctData.timestamp);
+    setBadge("ct-mode-badge", `Mode: demonstration (mock; 1h) — ${ctData.timestamp?.slice(11, 16) ?? ""}`, "info");
     try { renderRichRisk("ct-risk-card", await postJSON(ENDPOINTS.riskCT, ctData.input_data)); } catch(_) {}
   } catch (err) {
-    console.error("CT live error:", err);
-    setBadge("ct-mode-badge", "Mode: live error", "high");
+    console.error("CT demonstration error:", err);
+    setBadge("ct-mode-badge", "Mode: demonstration error", "high");
   }
 
   // --- Bromate (SoSe #10.1) — 1h resolution ---
   try {
     const brData = await getJSON(ENDPOINTS.treatmentBromateLatest);
     const brPred = pickPrediction(brData, ["prediction"]);
-    const brInput = brData.input_data;
+    const brInput = { ...brData.input_data, prediction_timestamp: brData.timestamp };
     state.ozonation.bromateInput = brInput;
     state.ozonation.bromatePrediction = brPred;
+    state.ozonation.lastTimestamp = brData.timestamp || state.ozonation.lastTimestamp;
 
     setValue("br_month", brInput.month);
     setValue("br_Chamber", brInput.Chamber);
@@ -2876,24 +3301,28 @@ async function updateLiveOzonationOnce() {
 
     setText("bromate-prediction", brPred, 3);
     setText("bromate-status", classifyPrediction(brPred, 5, 10), 0);
+    const issued = document.getElementById("bromate-issued-at");
+    const issuedTimestamp = brData.persistence?.observed_at || `${brData.timestamp}Z`;
+    if (issued) issued.textContent = `Prediction issued: ${new Date(issuedTimestamp).toLocaleString()}`;
     if (charts.bromate) { charts.bromate.data.datasets[0].data = [brPred ?? 0]; charts.bromate.update(); }
     latestOzonation.bromate = brPred;
-    pushOzonationHistory(charts.bromateHistory, bromateHistoryLabels, brData.timestamp?.slice(11, 19), bromateHistoryPred, brPred, null, null);
-    pushOzonationHistory(charts.bromateHistoryRisk, bromateHistoryLabels, brData.timestamp?.slice(11, 19), [...bromateHistoryPred], brPred, null, null);
-    setBadge("bromate-mode-badge", "Mode: live (1h res.)", "info");
+    await loadBromateDatabaseHistory();
+    pushOzonationHistory(charts.bromateHistoryRisk, [...bromateHistoryLabels], brData.timestamp?.slice(11, 19), [...bromateHistoryPred], brPred, null, null);
+    setBadge("bromate-mode-badge", "Mode: demonstration (mock; 1h model context)", "info");
     try { renderRichRisk("bromate-risk-card", await postJSON(ENDPOINTS.riskBromate, brData.input_data)); } catch(_) {}
   } catch (err) {
-    console.error("Bromate live error:", err);
-    setBadge("bromate-mode-badge", "Mode: live error", "high");
+    console.error("Bromate demonstration error:", err);
+    setBadge("bromate-mode-badge", "Mode: demonstration error", "high");
   }
 
   // --- Coliform (SoSe #10.2) — 1h resolution ---
   try {
     const colData = await getJSON(ENDPOINTS.treatmentColiformLatest);
     const colPred = pickPrediction(colData, ["prediction"]);
-    const colInput = colData.input_data;
+    const colInput = { ...colData.input_data, prediction_timestamp: colData.timestamp };
     state.ozonation.coliformInput = colInput;
     state.ozonation.coliformPrediction = colPred;
+    state.ozonation.lastTimestamp = colData.timestamp || state.ozonation.lastTimestamp;
 
     setValue("col_Chamber", colInput.Chamber);
     setValue("col_WaterTemperature", colInput.WaterTemperature);
@@ -2905,25 +3334,51 @@ async function updateLiveOzonationOnce() {
 
     setText("coliform-prediction", colPred, 3);
     setText("coliform-status", classifyInverse(colPred, 0.85, 1.2), 0);
+    updateCTDecisionSupport(colData);
     if (charts.coliform) { charts.coliform.data.datasets[0].data = [colPred ?? 0]; charts.coliform.update(); }
     latestOzonation.coliform = colPred;
     pushOzonationHistory(charts.coliformHistory, coliformHistoryLabels, colData.timestamp?.slice(11, 19), coliformHistoryPred, colPred, null, null);
     pushOzonationHistory(charts.coliformHistoryRisk, coliformHistoryLabels, colData.timestamp?.slice(11, 19), [...coliformHistoryPred], colPred, null, null);
-    setBadge("coliform-mode-badge", "Mode: live (1h res.)", "info");
+    setBadge("coliform-mode-badge", "Mode: demonstration (mock; 1h model context)", "info");
   } catch (err) {
-    console.error("Coliform live error:", err);
-    setBadge("coliform-mode-badge", "Mode: live error", "high");
+    console.error("Coliform demonstration error:", err);
+    setBadge("coliform-mode-badge", "Mode: demonstration error", "high");
   }
 
-  setBadge("ozonation-mode-badge", "Mode: live", "info");
+  setBadge("ozonation-mode-badge", "Mode: demonstration (mock PIMS)", "info");
   refreshOzonationDashboard();
   await runAutomaticOzonationRisk();
 }
 
+document.getElementById("btn-bromate-run")?.addEventListener("click", async () => {
+  const button = document.getElementById("btn-bromate-run");
+  try {
+    if (button) button.disabled = true;
+    const data = await getJSON(ENDPOINTS.treatmentBromateLatest);
+    const prediction = pickPrediction(data, ["prediction"]);
+    state.ozonation.bromateInput = { ...data.input_data, prediction_timestamp: data.timestamp };
+    state.ozonation.bromatePrediction = prediction;
+    state.ozonation.lastTimestamp = data.timestamp || state.ozonation.lastTimestamp;
+    latestOzonation.bromate = prediction;
+    setText("bromate-prediction", prediction, 3);
+    const issued = document.getElementById("bromate-issued-at");
+    const issuedTimestamp = data.persistence?.observed_at || `${data.timestamp}Z`;
+    if (issued) issued.textContent = `Prediction issued: ${new Date(issuedTimestamp).toLocaleString()}`;
+    await loadBromateDatabaseHistory();
+    refreshOzonationDashboard();
+    setBadge("bromate-mode-badge", "Mode: mock PIMS (1h)", "info");
+  } catch (error) {
+    setBadge("bromate-mode-badge", "Mode: prediction error", "high");
+    alert("Bromate prediction failed: " + error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
 document.getElementById("btn-ozonation-live-start")?.addEventListener("click", async () => {
   stopOzonationLiveMode();
   await updateLiveOzonationOnce();
-  ozonationLiveInterval = setInterval(updateLiveOzonationOnce, 5000);
+  ozonationLiveInterval = setInterval(updateLiveOzonationOnce, 60 * 60 * 1000);
 });
 
 document.getElementById("btn-ozonation-live-stop")?.addEventListener("click", () => {
@@ -2957,9 +3412,7 @@ document.getElementById("form-risk-coagulation")?.addEventListener("submit", asy
     state.coagulation.lastRisk = data;
     state.coagulation.lastInput = payload;
     state.coagulation.lastPrediction = data?.prediction ?? state.coagulation.lastPrediction;
-    renderCoagulationRisk(data, "coagulation-risk-output", "risk-coagulation-output");
-    const riskClass = data?.traffic_light?.level || data?.overall_risk?.class || "–";
-    setBadge("coagulation-risk-badge", `Risk: ${riskClass}`, riskBadgeClass(riskClass));
+    renderCoagulationRisk(data, null, "risk-coagulation-output");
     updateRiskOverview();
   } catch (err) {
     renderJSON("risk-coagulation-output", { error: err.message });
@@ -2997,9 +3450,11 @@ document.getElementById("form-risk-distribution")?.addEventListener("submit", as
   e.preventDefault();
   try {
     const payload = normalizeBooleanStrings(formDataToObject(e.target));
+    payload.prediction_timestamp = payload.prediction_timestamp || new Date().toISOString();
     const data = await postJSON(ENDPOINTS.riskDistributionSose11, payload);
     state.distribution.lastInput = payload;
     state.distribution.lastRisk = data;
+    state.distribution.lastTimestamp = payload.prediction_timestamp;
     renderRichRisk("risk-distribution-output", data);
     updateRiskOverview();
   } catch (err) {

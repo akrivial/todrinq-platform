@@ -1,7 +1,9 @@
 import os
+import hmac
 from fastapi import Header, HTTPException, Request
 
-API_TOKEN = os.getenv("TODRINQ_API_TOKEN", "todrinq-demo-2026")
+API_TOKEN = os.getenv("TODRINQ_API_TOKEN")
+ALLOW_QUERY_TOKEN = os.getenv("TODRINQ_ALLOW_QUERY_TOKEN", "false").lower() in {"1", "true", "yes"}
 
 
 def verify_api_token(
@@ -10,7 +12,10 @@ def verify_api_token(
 ):
     query_token = request.query_params.get("token")
 
-    if x_api_key == API_TOKEN or query_token == API_TOKEN:
+    if x_api_key and API_TOKEN and hmac.compare_digest(x_api_key, API_TOKEN):
+        return True
+
+    if ALLOW_QUERY_TOKEN and query_token and API_TOKEN and hmac.compare_digest(query_token, API_TOKEN):
         return True
 
     raise HTTPException(

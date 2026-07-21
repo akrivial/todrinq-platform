@@ -25,6 +25,13 @@ class SourceRiskInput(BaseModel):
     reset_history: bool = False
 
 
+class ReliabilityInput(BaseModel):
+    """Runtime data-quality context supplied by a sensor/source adapter."""
+    prediction_timestamp: Optional[str] = None
+    maintenance_active: bool = False
+    reset_history: bool = False
+
+
 class RLRiskInput(BaseModel):
     current_fecl3_dose: float
     recommended_fecl3_dose: float
@@ -32,7 +39,7 @@ class RLRiskInput(BaseModel):
     confidence: float
 
 
-class CTInput(BaseModel):
+class CTInput(ReliabilityInput):
     Chamber: float
     WaterTemperature: float
     RFTurbidity: float
@@ -40,7 +47,7 @@ class CTInput(BaseModel):
     Ozonedosage: float
 
 
-class BromateInput(BaseModel):
+class BromateInput(ReliabilityInput):
     month: float
     Chamber: float
     WaterTemperature: float
@@ -55,7 +62,7 @@ class BromateInput(BaseModel):
     CT_All: float
 
 
-class ColiformInput(BaseModel):
+class ColiformInput(ReliabilityInput):
     Chamber: float
     WaterTemperature: float
     RFTurbidity: float
@@ -72,13 +79,13 @@ class OzonationRiskInput(BaseModel):
     yopi_sensitive: bool = False
 
 
-class OzonationOperationalInput(BaseModel):
+class OzonationOperationalInput(ReliabilityInput):
     bromate_pred: float
     ct_pred: float
     coliform_pred: float
 
 
-class DistributionRiskInput(BaseModel):
+class DistributionRiskInput(ReliabilityInput):
     aeromonas_probability: float
     residual_disinfectant_low: bool = False
     warm_water_condition: bool = False
@@ -86,8 +93,12 @@ class DistributionRiskInput(BaseModel):
     yopi_sensitive: bool = False
 
 
+class CoagulationRiskInput(CoagulationInput, ReliabilityInput):
+    pass
+
+
 class TreatmentRiskInput(BaseModel):
-    coagulation: CoagulationInput
+    coagulation: CoagulationRiskInput
     rl: Optional[RLRiskInput] = None
     ozonation: OzonationRiskInput
     yopi_sensitive: bool = False
@@ -137,6 +148,23 @@ COLIFORM_LOG_MODERATE = 0.85  # log removal — warning zone
 COLIFORM_THRESHOLD = COLIFORM_LOG_HIGH
 AEROMONAS_THRESHOLD = 0.3
 
+# Runtime reliability rules. High-risk persistence is intentionally separate
+# from scientific/model thresholds: it protects operators from a single spike.
+# These defaults must be validated with Waternet before production deployment.
+RELIABILITY_RULES = {
+    "coagulation": {"high_persistence": 3, "valid_range": (0.0, 100.0), "max_step": 12.0, "max_age_minutes": 90},
+    "ct":          {"high_persistence": 3, "valid_range": (0.0, 20.0),  "max_step": 3.0,  "max_age_minutes": 90},
+    "bromate":     {"high_persistence": 3, "valid_range": (0.0, 100.0), "max_step": 10.0, "max_age_minutes": 90},
+    "coliform":    {"high_persistence": 3, "valid_range": (0.0, 10.0),  "max_step": 2.0,  "max_age_minutes": 90},
+    "distribution": {"high_persistence": 3, "valid_range": (0.0, 1.0), "max_step": 0.5,  "max_age_minutes": 90},
+    # The live UI calls the detailed and operational ozonation endpoints in
+    # one cycle. Separate histories prevent one prediction being counted twice.
+    "bromate_operational": {"high_persistence": 3, "valid_range": (0.0, 100.0), "max_step": 10.0, "max_age_minutes": 90},
+    "ct_operational":      {"high_persistence": 3, "valid_range": (0.0, 20.0),  "max_step": 3.0,  "max_age_minutes": 90},
+    "coliform_operational": {"high_persistence": 3, "valid_range": (0.0, 10.0), "max_step": 2.0,  "max_age_minutes": 90},
+}
+RELIABILITY_HISTORY: dict[str, list[dict]] = {key: [] for key in RELIABILITY_RULES}
+
 
 # --------------------------------------------------
 # HELPERS
@@ -150,6 +178,134 @@ def unwrap(x):
         return float(x)
     except Exception:
         return x
+
+
+def _parse_prediction_time(value: Optional[str]) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def apply_runtime_reliability(
+    response: dict,
+    *,
+    sensor_key: str,
+    value: float,
+    raw_class: str,
+    prediction_timestamp: Optional[str] = None,
+    maintenance_active: bool = False,
+    reset_history: bool = False,
+) -> dict:
+    """Attach quality/persistence state and return the effective risk class.
+
+    Maintenance, invalid and stale results are not risk-producing. A first High
+    remains Moderate until the configured number of consecutive High results is
+    reached. The history is an in-process demo store and should be externalised
+    for multi-instance production deployment.
+    """
+    rule = RELIABILITY_RULES[sensor_key]
+    history = RELIABILITY_HISTORY[sensor_key]
+    if reset_history:
+        history.clear()
+
+    try:
+        observed_at = _parse_prediction_time(prediction_timestamp)
+        age_minutes = max(0.0, (datetime.now(timezone.utc) - observed_at).total_seconds() / 60.0)
+        timestamp_valid = True
+    except (TypeError, ValueError):
+        observed_at = datetime.now(timezone.utc)
+        age_minutes = 0.0
+        timestamp_valid = False
+
+    low, high = rule["valid_range"]
+    physically_valid = isinstance(value, (int, float)) and low <= float(value) <= high
+    stale = age_minutes > rule["max_age_minutes"]
+    previous = history[-1] if history else None
+    step_change = abs(float(value) - previous["value"]) if previous and physically_valid else 0.0
+    suspected_outlier = bool(previous and step_change > rule["max_step"])
+
+    if maintenance_active:
+        status, included, effective_class = "maintenance", False, "Unavailable"
+    elif not timestamp_valid or not physically_valid:
+        status, included, effective_class = "invalid", False, "Unavailable"
+    elif stale:
+        status, included, effective_class = "stale", False, "Unavailable"
+    else:
+        history_item = {
+            "timestamp": observed_at.isoformat(),
+            "value": float(value),
+            "raw_class": raw_class,
+        }
+        # Re-evaluating the same stored prediction (for example after a UI
+        # refresh) must not count as another consecutive prediction.
+        if history and history[-1]["timestamp"] == history_item["timestamp"]:
+            history[-1] = history_item
+        else:
+            history.append(history_item)
+        history[:] = history[-24:]
+        consecutive_high = 0
+        for item in reversed(history):
+            if str(item["raw_class"]).lower() != "high":
+                break
+            consecutive_high += 1
+        required = rule["high_persistence"]
+        if str(raw_class).lower() == "high" and consecutive_high < required:
+            status = "suspected_outlier" if suspected_outlier else "awaiting_confirmation"
+            included, effective_class = True, "Moderate"
+        else:
+            status, included, effective_class = "valid", True, raw_class
+
+    consecutive_high = 0
+    for item in reversed(history):
+        if str(item["raw_class"]).lower() != "high":
+            break
+        consecutive_high += 1
+
+    if included:
+        response["raw_risk_class"] = raw_class
+        response["overall_risk"] = {
+            "class": effective_class,
+            "score": 5 if effective_class == "High" else 3 if effective_class == "Moderate" else 1,
+        }
+        response["recommended_action"] = action_from_class(effective_class)
+    else:
+        response["raw_risk_class"] = raw_class
+        response["overall_risk"] = {"class": "Unavailable", "score": 0}
+        response["recommended_action"] = "Verify data availability and quality before making a risk-based decision."
+
+    response["included_in_risk_aggregation"] = included
+    response["reliability"] = {
+        "status": status,
+        "maintenance_active": maintenance_active,
+        "physically_valid": physically_valid,
+        "stale": stale,
+        "age_minutes": round(age_minutes, 2),
+        "suspected_outlier": suspected_outlier,
+        "step_change": round(step_change, 4),
+        "maximum_step": rule["max_step"],
+        "valid_range": [low, high],
+        "consecutive_high": consecutive_high,
+        "required_consecutive_high": rule["high_persistence"],
+        "display_count": f"{min(consecutive_high, rule['high_persistence'])}/{rule['high_persistence']}",
+        "observed_at": observed_at.isoformat(),
+        "note": "Runtime reliability defaults require site validation before production use.",
+    }
+    return response
+
+
+def aggregate_active_components(components: list[dict]) -> dict:
+    active = [
+        component["overall_risk"]["class"]
+        for component in components
+        if component.get("included_in_risk_aggregation", True)
+        and component.get("overall_risk", {}).get("class") not in {"Unavailable", "Unknown"}
+    ]
+    if not active:
+        return {"class": "Unavailable", "score": 0}
+    return aggregate_risk_classes(active)
 
 
 def clamp_score(value: int) -> int:
@@ -1050,10 +1206,19 @@ def source_risk(data: SourceRiskInput):
 
 
 @router.post("/coagulation", summary="Coagulation risk assessment")
-def coagulation_risk(body: CoagulationInput):
+def coagulation_risk(body: CoagulationRiskInput):
     try:
         prediction = unwrap(run_coagulation_prediction(body))
-        return classify_coagulation_risk(prediction)
+        response = classify_coagulation_risk(prediction)
+        return apply_runtime_reliability(
+            response,
+            sensor_key="coagulation",
+            value=prediction,
+            raw_class=response["overall_risk"]["class"],
+            prediction_timestamp=body.prediction_timestamp,
+            maintenance_active=body.maintenance_active,
+            reset_history=body.reset_history,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -1097,7 +1262,16 @@ def ct_risk(data: CTInput):
                 data.Ozonedosage,
             ]])
         )
-        return classify_ct_risk(pred)
+        response = classify_ct_risk(pred)
+        return apply_runtime_reliability(
+            response,
+            sensor_key="ct",
+            value=pred,
+            raw_class=response["overall_risk"]["class"],
+            prediction_timestamp=data.prediction_timestamp,
+            maintenance_active=data.maintenance_active,
+            reset_history=data.reset_history,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -1124,7 +1298,16 @@ def bromate_risk(data: BromateInput):
                 data.CT_All,
             ]])
         )
-        return classify_bromate_risk(pred)
+        response = classify_bromate_risk(pred)
+        return apply_runtime_reliability(
+            response,
+            sensor_key="bromate",
+            value=pred,
+            raw_class=response["overall_risk"]["class"],
+            prediction_timestamp=data.prediction_timestamp,
+            maintenance_active=data.maintenance_active,
+            reset_history=data.reset_history,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -1146,7 +1329,16 @@ def coliform_risk(data: ColiformInput):
                 data.CT_All,
             ]])
         )
-        return classify_coliform_risk(pred)
+        response = classify_coliform_risk(pred)
+        return apply_runtime_reliability(
+            response,
+            sensor_key="coliform",
+            value=pred,
+            raw_class=response["overall_risk"]["class"],
+            prediction_timestamp=data.prediction_timestamp,
+            maintenance_active=data.maintenance_active,
+            reset_history=data.reset_history,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -1164,11 +1356,7 @@ def ozonation_risk(data: OzonationRiskInput):
         bromate_component = bromate_risk(data.bromate)
         coliform_component = coliform_risk(data.coliform)
 
-        overall = overall_from_scores(
-            ct_component["overall_risk"]["score"],
-            bromate_component["overall_risk"]["score"],
-            coliform_component["overall_risk"]["score"],
-        )
+        overall = aggregate_active_components([ct_component, bromate_component, coliform_component])
 
         return {
             "module": MODULE_RISK,
@@ -1204,18 +1392,53 @@ def ozonation_risk(data: OzonationRiskInput):
 def ozonation_operational_risk(data: OzonationOperationalInput):
 
     # ── Traffic-light classification ──────────────────────────────────────
-    def _tl(level): return {"low": ("green","🟢"), "moderate": ("amber","🟡"), "high": ("red","🔴")}[level]
+    def _tl(level): return {
+        "low": ("green", "🟢"),
+        "moderate": ("amber", "🟡"),
+        "high": ("red", "🔴"),
+        "unavailable": ("grey", "⚪"),
+    }[level]
 
     # Bromate: low <5 µg/L; moderate 5-10; high >=10
     br_level = "high" if data.bromate_pred >= BROMATE_HIGH else ("moderate" if data.bromate_pred >= BROMATE_LOW else "low")
+    br_raw_level = br_level
     br_color, br_icon = _tl(br_level)
 
     # CT: threshold = 0.7 mg/L·min; high <0.3, moderate 0.3-0.7, low ≥0.7
     ct_level = "high" if data.ct_pred < 0.3 else ("moderate" if data.ct_pred < CT_THRESHOLD else "low")
+    ct_raw_level = ct_level
     ct_color, ct_icon = _tl(ct_level)
 
     # Coliform log removal: threshold = 1.2; high <0.85, moderate 0.85-1.2, low >1.2
     co_level = "high" if data.coliform_pred < COLIFORM_LOG_MODERATE else ("moderate" if data.coliform_pred <= COLIFORM_LOG_HIGH else "low")
+    co_raw_level = co_level
+
+    reliability_components = {
+        "bromate": apply_runtime_reliability(
+            {"overall_risk": {"class": br_raw_level.title(), "score": 1}},
+            sensor_key="bromate_operational", value=data.bromate_pred, raw_class=br_raw_level.title(),
+            prediction_timestamp=data.prediction_timestamp,
+            maintenance_active=data.maintenance_active, reset_history=data.reset_history,
+        ),
+        "ct": apply_runtime_reliability(
+            {"overall_risk": {"class": ct_raw_level.title(), "score": 1}},
+            sensor_key="ct_operational", value=data.ct_pred, raw_class=ct_raw_level.title(),
+            prediction_timestamp=data.prediction_timestamp,
+            maintenance_active=data.maintenance_active, reset_history=data.reset_history,
+        ),
+        "coliform": apply_runtime_reliability(
+            {"overall_risk": {"class": co_raw_level.title(), "score": 1}},
+            sensor_key="coliform_operational", value=data.coliform_pred, raw_class=co_raw_level.title(),
+            prediction_timestamp=data.prediction_timestamp,
+            maintenance_active=data.maintenance_active, reset_history=data.reset_history,
+        ),
+    }
+    br_level = reliability_components["bromate"]["overall_risk"]["class"].lower()
+    ct_level = reliability_components["ct"]["overall_risk"]["class"].lower()
+    co_level = reliability_components["coliform"]["overall_risk"]["class"].lower()
+    br_color, br_icon = _tl(br_level)
+    ct_color, ct_icon = _tl(ct_level)
+    co_color, co_icon = _tl(co_level)
     co_color, co_icon = _tl(co_level)
 
     # ── Probabilistic likelihood (P of exceeding operational threshold) ───
@@ -1271,7 +1494,10 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
     ct_score = ct_lh_n * ct_sv_n
     co_score = co_lh_n * co_sv_n
     overall_score_num = max(br_score, ct_score, co_score)
-    overall_label = _score_class(overall_score_num)
+    effective_overall = aggregate_active_components(list(reliability_components.values()))
+    overall_label = effective_overall["class"]
+    if overall_label == "Unavailable":
+        overall_score_num = 0
 
     # ── Trade-off & operational message logic ─────────────────────────────
     disinfection_insufficient = ct_level != "low" or co_level != "low"
@@ -1441,6 +1667,10 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
         "submodule": "Treatment / Ozonation",
         "assessment_type": "operational",
         "overall_risk": {"class": overall_label, "score": overall_score_num},
+        "reliability": {
+            "status": "unavailable" if overall_label == "Unavailable" else "active",
+            "components": {key: value["reliability"] for key, value in reliability_components.items()},
+        },
         "trade_off_detected": trade_off,
         "trade_off_warning": trade_off,
         "combined_message": combined_message,
@@ -1455,6 +1685,7 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
             "thresholds": {"low_boundary": BROMATE_LOW, "high_boundary": BROMATE_HIGH},
             "guideline": "EU DWD: 10 µg/L",
             "message": bromate_message,
+            "reliability": reliability_components["bromate"]["reliability"],
         },
         "coliform_indicator": {
             "label": "Coliform Risk",
@@ -1465,6 +1696,7 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
             "icon": co_icon,
             "thresholds": {"moderate_boundary": COLIFORM_LOG_MODERATE, "low_boundary": COLIFORM_LOG_HIGH},
             "message": coliform_message,
+            "reliability": reliability_components["coliform"]["reliability"],
         },
         "ct_indicator": {
             "label": "CT Exposure",
@@ -1473,6 +1705,7 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
             "level": ct_level,
             "color": ct_color,
             "icon": ct_icon,
+            "reliability": reliability_components["ct"]["reliability"],
         },
         "risk_table": risk_table,
         "severity_likelihood_matrix": {
@@ -1492,12 +1725,21 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
 @router.post("/distribution/sose-11/current", summary="Distribution SoSe #11 risk assessment")
 def distribution_risk(data: DistributionRiskInput):
     try:
-        return classify_distribution_risk(
+        response = classify_distribution_risk(
             aeromonas_probability=data.aeromonas_probability,
             residual_disinfectant_low=data.residual_disinfectant_low,
             warm_water_condition=data.warm_water_condition,
             stagnation_risk=data.stagnation_risk,
             yopi_sensitive=data.yopi_sensitive,
+        )
+        return apply_runtime_reliability(
+            response,
+            sensor_key="distribution",
+            value=data.aeromonas_probability,
+            raw_class=response["overall_risk"]["class"],
+            prediction_timestamp=data.prediction_timestamp,
+            maintenance_active=data.maintenance_active,
+            reset_history=data.reset_history,
         )
     except Exception as e:
         raise HTTPException(
@@ -1516,10 +1758,7 @@ def treatment_current_risk(data: TreatmentRiskInput):
         coag_component = coagulation_risk(data.coagulation)
         ozonation_component = ozonation_risk(data.ozonation)
 
-        overall = aggregate_risk_classes([
-            coag_component["overall_risk"]["class"],
-            ozonation_component["overall_risk"]["class"],
-        ])
+        overall = aggregate_active_components([coag_component, ozonation_component])
 
         return {
             "module": MODULE_RISK,
@@ -1560,11 +1799,7 @@ def system_current_risk_post(data: SystemRiskInput):
         treatment_component = treatment_current_risk(data.treatment)
         distribution_component = distribution_risk(data.distribution)
 
-        overall = aggregate_risk_classes([
-            source_component["overall_risk"]["class"],
-            treatment_component["overall_risk"]["class"],
-            distribution_component["overall_risk"]["class"],
-        ])
+        overall = aggregate_active_components([source_component, treatment_component, distribution_component])
 
         dominant = max(
             [

@@ -3,10 +3,16 @@
 from pathlib import Path
 import sys
 import logging
+import base64
+import hashlib
+import hmac
+import os
+import secrets
+import time
 
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response, JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -25,6 +31,7 @@ from app.routes.treatment import router as treatment_router
 from app.routes.distribution import router as distribution_router
 from app.routes.synthetic import router as synthetic_router
 from app.routes.coagulation_rl import router as coagulation_rl_router
+from app.routes.observations import router as observations_router
 
 
 
@@ -46,18 +53,76 @@ print(">>> UI_INDEX   =", UI_INDEX.resolve())
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("soft_sensors_api")
 
-# --- Platform token ---
-APP_TOKEN = "todrinq-demo-2026"
+# --- Platform protection ---
+APP_TOKEN = os.getenv("TODRINQ_API_TOKEN")
+LOGIN_PASSWORD = os.getenv("TODRINQ_APP_PASSWORD")
+SESSION_SECRET = os.getenv("TODRINQ_SESSION_SECRET") or LOGIN_PASSWORD or secrets.token_urlsafe(32)
+SESSION_COOKIE = "todrinq_session"
+SESSION_TTL_SECONDS = int(os.getenv("TODRINQ_SESSION_TTL_SECONDS", "43200"))
+ALLOW_QUERY_TOKEN = os.getenv("TODRINQ_ALLOW_QUERY_TOKEN", "false").lower() in {"1", "true", "yes"}
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("TODRINQ_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
+
+def _b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _sign(value: str) -> str:
+    return hmac.new(SESSION_SECRET.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _make_session() -> str:
+    expires = int(time.time()) + SESSION_TTL_SECONDS
+    nonce = secrets.token_urlsafe(16)
+    payload = _b64(f"operator:{expires}:{nonce}".encode("utf-8"))
+    return f"{payload}.{_sign(payload)}"
+
+
+def _has_valid_session(request: Request) -> bool:
+    cookie = request.cookies.get(SESSION_COOKIE)
+    if not cookie or "." not in cookie:
+        return False
+
+    payload, signature = cookie.rsplit(".", 1)
+    if not hmac.compare_digest(signature, _sign(payload)):
+        return False
+
+    padded = payload + "=" * (-len(payload) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        _, expires, _ = decoded.split(":", 2)
+        return int(expires) >= int(time.time())
+    except (ValueError, UnicodeDecodeError):
+        return False
+
+
+def _cookie_secure(request: Request) -> bool:
+    forced = os.getenv("TODRINQ_COOKIE_SECURE")
+    if forced is not None:
+        return forced.lower() in {"1", "true", "yes"}
+    return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
 
 
 def verify_platform_token(request: Request):
-    token = request.query_params.get("token")
+    if _has_valid_session(request):
+        return True
 
-    if token != APP_TOKEN:
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized"
-        )
+    api_key = request.headers.get("x-api-key")
+    if api_key and APP_TOKEN and hmac.compare_digest(api_key, APP_TOKEN):
+        return True
+
+    query_token = request.query_params.get("token")
+    if ALLOW_QUERY_TOKEN and query_token and APP_TOKEN and hmac.compare_digest(query_token, APP_TOKEN):
+        return True
+
+    raise HTTPException(
+        status_code=401,
+        detail="Unauthorized"
+    )
 
     return True
 
@@ -76,7 +141,7 @@ app = FastAPI(
 # --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,6 +152,11 @@ app.add_middleware(
 @app.middleware("http")
 async def no_cache_mw(request: Request, call_next):
     response = await call_next(request)
+
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
 
     if request.url.path.startswith(("/", "/app", "/app2", "/static/")):
         response.headers["Cache-Control"] = "no-store, max-age=0"
@@ -114,10 +184,8 @@ def protected_openapi(request: Request):
 def protected_docs(request: Request):
     verify_platform_token(request)
 
-    token = request.query_params.get("token")
-
     return get_swagger_ui_html(
-        openapi_url=f"/openapi.json?token={token}",
+        openapi_url="/openapi.json",
         title=f"{app.title} - Swagger UI",
     )
 
@@ -129,9 +197,96 @@ else:
     logger.error("STATIC_DIR does not exist: %s", STATIC_DIR)
 
 
+def _login_page(error: str = "") -> HTMLResponse:
+    error_html = f'<p class="error">{error}</p>' if error else ""
+    return HTMLResponse(f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ToDrinQ Login</title>
+  <style>
+    :root {{ color-scheme: light; --teal:#38c8dc; --navy:#0d1f3c; --line:#d8e8ef; }}
+    * {{ box-sizing:border-box; }}
+    body {{
+      min-height:100vh; margin:0; display:grid; place-items:center;
+      font-family:Inter, Arial, sans-serif; background:#f5f9fb; color:var(--navy);
+    }}
+    main {{
+      width:min(420px, calc(100vw - 32px)); padding:32px; background:white;
+      border:1px solid var(--line); border-radius:14px; box-shadow:0 18px 50px rgba(13,31,60,.10);
+    }}
+    h1 {{ margin:0 0 8px; font-size:1.65rem; }}
+    p {{ margin:0 0 22px; color:#517083; line-height:1.45; }}
+    label {{ display:block; font-weight:700; font-size:.86rem; margin-bottom:8px; }}
+    input {{
+      width:100%; height:46px; border:1px solid #b8d3de; border-radius:8px;
+      padding:0 12px; font:inherit; color:var(--navy);
+    }}
+    button {{
+      width:100%; height:46px; margin-top:18px; border:0; border-radius:8px;
+      background:linear-gradient(135deg,var(--navy),var(--teal)); color:white;
+      font-weight:800; cursor:pointer;
+    }}
+    .error {{ color:#b42318; font-weight:700; margin-bottom:14px; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ToDrinQ Platform</h1>
+    <p>Sign in to access the protected decision-support dashboard.</p>
+    {error_html}
+    <form method="post" action="/login">
+      <label for="password">Platform password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>""")
+
+
+@app.get("/login", include_in_schema=False)
+def login_page(request: Request):
+    if _has_valid_session(request):
+        return RedirectResponse(url="/app", status_code=303)
+    return _login_page()
+
+
+@app.post("/login", include_in_schema=False)
+def login_submit(request: Request, password: str = Form(...)):
+    if not LOGIN_PASSWORD:
+        return _login_page("Platform login is not configured. Set TODRINQ_APP_PASSWORD.")
+
+    if not LOGIN_PASSWORD or not hmac.compare_digest(password, LOGIN_PASSWORD):
+        return _login_page("Invalid password.")
+
+    response = RedirectResponse(url="/app", status_code=303)
+    response.set_cookie(
+        SESSION_COOKIE,
+        _make_session(),
+        httponly=True,
+        secure=_cookie_secure(request),
+        samesite="lax",
+        max_age=SESSION_TTL_SECONDS,
+        path="/",
+    )
+    return response
+
+
+@app.post("/logout", include_in_schema=False)
+def logout():
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
+
+
 # --- Serve protected UI ---
 def _serve_ui_html(request: Request):
-    verify_platform_token(request)
+    try:
+        verify_platform_token(request)
+    except HTTPException:
+        return RedirectResponse(url="/login", status_code=303)
 
     if UI_INDEX.exists():
         html = UI_INDEX.read_bytes()
@@ -231,6 +386,11 @@ app.include_router(
 app.include_router(
     ngsi_router,
     tags=["FIWARE / NGSI-LD"],
+    dependencies=[Depends(verify_platform_token)]
+)
+
+app.include_router(
+    observations_router,
     dependencies=[Depends(verify_platform_token)]
 )
 

@@ -4,6 +4,7 @@ from typing import List
 
 import app.model_registry as registry
 from app.services.sose9_predictions import predict_turbidity_3h
+from app.services.observation_store import record_observation
 from app.routes.mock_pims import generate_sose9_data
 
 router = APIRouter()
@@ -84,7 +85,11 @@ def sose9_predict(body: SoSe9Input):
             status_code=422,
             detail=f"Feature mismatch — model expects column {e}. Check features.json.",
         )
-
+    storage = record_observation(
+        sensor_id="inlet_turbidity_3h", value=prediction, unit="FTU",
+        source="manual", model_version="SoSe-9",
+        metadata={"horizon_hours": 3, "input": feature_dict},
+    )
     return {
         "module": "Source / Intake",
         "sensor": "SoSe #9",
@@ -105,6 +110,7 @@ def sose9_predict(body: SoSe9Input):
             "sensor_temperature_current": body.sensor_temperature,
             "month": body.month,
         },
+        "persistence": storage,
     }
 
 
@@ -156,7 +162,11 @@ def sose9_predict_live():
         )
     except KeyError as e:
         raise HTTPException(status_code=422, detail=f"Feature mismatch: {e}")
-
+    storage = record_observation(
+        sensor_id="inlet_turbidity_3h", value=prediction, unit="FTU",
+        observed_at=latest["timestamp"], source="mock_pims", model_version="SoSe-9",
+        metadata={"horizon_hours": 3, "scenario": latest.get("scenario")},
+    )
     return {
         "source": "mock_pims",
         "input_source": "mock_pims",
@@ -179,4 +189,5 @@ def sose9_predict_live():
             "mock_scenario": latest.get("scenario"),
             **debug_info,
         },
+        "persistence": storage,
     }

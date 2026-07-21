@@ -1,20 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 64" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 150" fill="none" role="img" aria-label="ToDrinQ logo">
   <defs>
-    <linearGradient id="td-drop" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#38c2e8"/>
-      <stop offset="100%" stop-color="#0072b1"/>
+    <linearGradient id="td-drop" x1="60" y1="8" x2="60" y2="138" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#62d4df"/>
+      <stop offset="0.55" stop-color="#48677c"/>
+      <stop offset="1" stop-color="#10244c"/>
     </linearGradient>
   </defs>
-  <!-- Clean teardrop -->
-  <path d="M28 6 C28 6 10 26 10 38 C10 50 18.3 58 28 58 C37.7 58 46 50 46 38 C46 26 28 6 28 6Z" fill="url(#td-drop)"/>
-  <!-- Inner ring cutout -->
-  <circle cx="28" cy="38" r="9" fill="white" opacity="0.25"/>
-  <circle cx="28" cy="38" r="5" fill="url(#td-drop)"/>
-  <!-- Stem of p-shape -->
-  <rect x="20" y="24" width="5" height="20" rx="2.5" fill="white" opacity="0.9"/>
-  <!-- Text -->
-  <text x="56" y="30" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="800" fill="#0072b1" letter-spacing="-0.5">To</text>
-  <text x="80" y="30" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="800" fill="#0098d4">DrinQ</text>
-  <text x="56" y="46" font-family="Inter,Arial,sans-serif" font-size="9.5" font-weight="500" fill="#6a9fbe" letter-spacing="1.2">DECISION SUPPORT</text>
-  <text x="56" y="58" font-family="Inter,Arial,sans-serif" font-size="9.5" font-weight="500" fill="#6a9fbe" letter-spacing="1.2">PLATFORM</text>
+  <path d="M60 8C45 25 14 70 14 100c0 27 18 42 46 42s46-15 46-42C106 70 75 25 60 8Z" fill="url(#td-drop)"/>
+  <path d="M43 130V76c0-17 12-29 29-29 16 0 29 12 29 28"
+        stroke="#fff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M88 75H101" stroke="#fff" stroke-width="16" stroke-linecap="round"/>
+  <path d="M90 91C97 99 100 104 100 110c0 8-5 13-12 13s-12-5-12-13c0-6 4-11 14-19Z" fill="#fff"/>
 </svg>
