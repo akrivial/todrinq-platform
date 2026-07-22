@@ -1,247 +1,124 @@
-# 💧 ToDrinQ Platform
+# ToDrinQ Platform
 
-A modular **FastAPI-based decision-support platform** for drinking water quality monitoring, soft-sensor integration, and **source-to-tap risk translation**, developed in the context of the **ToDrinQ EU Horizon project** and tailored to the **Waternet** use case.
+FastAPI-based decision-support platform for drinking-water quality monitoring, soft-sensor prediction, historical validation and source-to-tap operational risk translation. It was developed for the ToDrinQ EU Horizon project and the Waternet demonstration environment.
 
----
+## Online platform
 
-## 🚀 Overview
+- Application: <https://qf3mvtw8ej.eu-central-1.awsapprunner.com/login>
+- API documentation: <https://qf3mvtw8ej.eu-central-1.awsapprunner.com/docs>
+- Health check: <https://qf3mvtw8ej.eu-central-1.awsapprunner.com/healthz>
 
-The ToDrinQ Platform integrates predictive models, treatment-process intelligence, and operational risk interpretation into a unified digital environment for drinking water systems.
+Access credentials are shared separately and are not stored in this repository.
 
-The platform is structured around four core modules:
+## Current implementation
 
-* **Source / Intake**
-* **Treatment**
-* **Distribution**
-* **Risk**
+The platform provides four connected operational modules:
 
-Its main purpose is to support water utilities in moving from raw model outputs to **actionable operational understanding**, including:
+- **Source / Intake:** RIWA hard-sensor context and SoSe #9 inlet-turbidity forecasting.
+- **Treatment:** SoSe #8 coagulation outlet turbidity, RL #5 FeCl3 dosage support, SoSe #10 CT, SoSe #10.1 bromate and SoSe #10.2 microbial removal.
+- **Distribution:** biological-stability monitoring; SoSe #11 remains explicitly under evaluation and no fake prediction is presented as an operational model result.
+- **Risk:** threshold-based source-to-tap classification, operator guidance and mitigation actions.
 
-* hazard identification  
-* likelihood estimation  
-* severity assessment  
-* consequence evaluation  
-* mitigation and operational actions  
+The current demonstration uses Mock PIMS inputs through the same interfaces intended for future real-PIMS data. Model predictions are real outputs of the integrated trained models where those models are available; mock inputs and mock validation measurements are labelled in the UI.
 
----
+### Prediction history and scheduling
 
-## 🔗 Model → Risk Integration
+The backend scheduler produces and stores hourly predictions for:
 
-Each soft sensor is **automatically connected to its corresponding risk assessment function**.
+- SoSe #9 inlet turbidity (prediction target: +3 hours)
+- SoSe #8 coagulation outlet turbidity
+- SoSe #10 CT
+- SoSe #10.1 bromate
+- SoSe #10.2 microbial removal
 
-Prediction → Risk Classification → Operator Guidance
+Historical records are stored in **Amazon DynamoDB** in the deployed AWS environment and in **SQLite** during local development. The AWS scheduler runs independently of the browser and local computer. CT validation uses five 10-day samples across the previous 50 days, reflecting the expected future laboratory-measurement interval.
 
-Works in:
-- manual mode  
-- live streaming mode (mock PIMS → real PIMS-ready)  
+### Risk confirmation rule
 
-The **Treatment module remains model-focused**  
-The **Risk module displays only risk-relevant outputs**
+Scientific/operational thresholds are evaluated first. A low-threshold result is Low Risk and a moderate-threshold result is Moderate Risk. For high-threshold results, three distinct consecutive predictions are used to avoid triggering an action from one isolated value:
 
----
+- 1 of 3: early warning, displayed as Moderate
+- 2 of 3: continued warning, displayed as Moderate
+- 3 of 3: confirmed High Risk and mitigation action
 
-## 🧩 Current Implemented Soft Sensors
+Refreshing or repeating the same timestamp does not increase the count. A subsequent value outside the high threshold breaks the high-risk sequence.
 
-### Source / Intake
+## Architecture and interoperability
 
-* **SoSe #9** – Early prediction of turbidity in DWTP inlet  
-  Predicts raw water turbidity up to 3 hours ahead.
+Operational path:
 
----
+`Mock/real PIMS -> FastAPI -> trained models -> persistent history -> risk translation -> operator UI`
 
-### Treatment – Coagulation
+The containerized FIWARE-aligned path includes Orion-LD as the NGSI-LD Context Broker, QuantumLeap for time-series integration, CrateDB, MongoDB and Redis. NGSI-LD entity upsert and notification endpoints are implemented. This is implementation evidence, not a claim of formal FIWARE certification.
 
-* **SoSe #8** – Estimation of turbidity of the coagulation-flocculation process  
-  Predicts turbidity after coagulation.
+AWS deployment uses:
 
-* **RL #5** – RL Optimal FeCl₃ dosage for coagulation process  
-  Recommends optimal ferric chloride dosage.
+- Amazon ECR for the Docker image
+- AWS App Runner for the continuously available application
+- Amazon DynamoDB for persistent prediction and observation history
+- an App Runner instance role with least-privilege DynamoDB access
 
----
+See [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for deployment details.
 
-### Treatment – Ozonation
+## Repository structure
 
-* **SoSe #10** – Prediction of the ozonation exposure (CT)  
-  Estimates disinfection capacity.
+```text
+app/
+  data_preprocessing/    model input preparation
+  models/                integrated model artefacts
+  routes/                prediction, history and risk APIs
+  services/              persistence and hourly scheduler
+  static/ui/             HTML, CSS, JavaScript, charts and illustrations
+  main.py                FastAPI application
+deploy/aws/              AWS role and DynamoDB policy documents
+tests/                   automated backend tests
+Dockerfile               production container definition
+requirements.txt         Python dependencies
+```
 
-* **SoSe #10.1** – Bromate formation model  
-  Predicts bromate formation risk.
+The complete UI is version-controlled under `app/static/ui/`, including `index.html`, `app.js`, `styles.css`, the local Chart.js bundle and the source/treatment/distribution illustrations.
 
-* **SoSe #10.2** – Coliform removal model  
-  Predicts microbial removal efficiency.
+## Run locally
 
----
+```powershell
+git clone https://github.com/akrivial/todrinq-platform.git
+cd todrinq-platform
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+$env:TODRINQ_APP_PASSWORD = "choose-a-local-password"
+uvicorn app.main:app --reload
+```
 
-### Distribution
+Open:
 
-* **SoSe #11** – Aeromonas prediction model  
-  Supports biological instability assessment (under evaluation).
+- UI: <http://127.0.0.1:8000/app>
+- API documentation: <http://127.0.0.1:8000/docs>
+- Health check: <http://127.0.0.1:8000/healthz>
 
----
+## Docker
 
-### Hard Sensor Placeholder
+```powershell
+docker build -t todrinq-platform .
+docker run --rm -p 8000:8000 -e TODRINQ_APP_PASSWORD="choose-a-password" todrinq-platform
+```
 
-* **BactoSense #4** – Placeholder for future operational integration.
+Runtime databases, virtual environments and credentials are intentionally excluded from Git. Dependencies are reproducible from `requirements.txt`, the image is reproducible from `Dockerfile`, and production history remains in DynamoDB rather than inside the container.
 
----
+## Project context
 
-## ⚙️ Main Functionalities
+- ToDrinQ EU Horizon Project, Grant Agreement No. 101082035
+- Delft University of Technology (TU Delft)
+- Waternet demonstration environment
 
-* Modular FastAPI backend  
-* Interactive web-based UI  
-* Soft-sensor prediction interfaces  
-* Automatic **prediction → risk translation**  
-* Mock / live-ready **PIMS-style integration**  
-* Risk evaluation across:
+## Author
 
-  * source conditions  
-  * coagulation performance  
-  * RL dosage recommendation  
-  * ozonation performance  
-  * distribution instability  
-  * treatment-wide risk  
-  * full system (source-to-tap) risk  
+**Akrivi Alexandraki**
 
-* Docker-ready deployment  
+Engineering Doctorate Candidate, Delft University of Technology
 
----
+Faculty of Civil Engineering and Geosciences, Sanitary Engineering
 
-## 🏗️ Platform Architecture
+## Status and scientific scope
 
-Source → Treatment → Distribution → Risk  
-
-Extended pipeline:
-
-SCADA → PIMS → API → Models → Risk → Operator Actions  
-
----
-
-## 📁 Repository Structure
-
-soft_sensors_api/  
-├── app/  
-│   ├── data_preprocessing/  
-│   ├── models/  
-│   ├── routes/  
-│   ├── services/  
-│   ├── static/ui/  
-│   ├── main.py  
-│   └── model_registry.py  
-├── Dockerfile  
-├── requirements.txt  
-├── README.md  
-└── .gitignore  
-
----
-
-## ⚙️ Installation & Running
-
-### 1. Clone
-
-git clone https://github.com/akrivial/todrinq-platform.git  
-cd todrinq-platform  
-cd soft_sensors_api  
-
-### 2. Environment
-
-python -m venv .venv  
-.\.venv\Scripts\Activate.ps1  
-
-### 3. Install
-
-pip install -r requirements.txt  
-
-### 4. Run
-
-uvicorn app.main:app --reload  
-
----
-
-## 📊 Access
-
-UI:  
-http://127.0.0.1:8000/app  
-
-Swagger:  
-http://127.0.0.1:8000/docs  
-
----
-
-## 🐳 Docker
-
-docker build -t todrinq-platform .  
-docker run -p 8000:8000 todrinq-platform  
-
----
-
-## 🔌 Integration with Waternet (PIMS)
-
-The platform is designed to connect directly to **Waternet PIMS**.
-
-### Steps:
-
-1. Replace mock endpoints with real PIMS data  
-2. Map input variables to:
-   - turbidity  
-   - FeCl₃ dosage  
-   - temperature  
-   - pH  
-   - flow  
-   - ozone dosage  
-
-3. Connect PIMS → FastAPI endpoints  
-4. Validate model inputs and scaling  
-5. Enable continuous live streaming  
-
----
-
-## 🔧 Development Notes
-
-* Built with **FastAPI (Python)**  
-* UI uses **vanilla JS + Chart.js**  
-* Models are loaded via `model_registry.py`  
-* Risk logic is implemented in `routes/risk.py`  
-* Fully compatible with **FIWARE architecture (future NGSI-LD integration)**  
-* Designed for **Docker deployment in Waternet infrastructure**
-
----
-
-## 🌍 Project Context
-
-Developed within:
-
-* 🇪🇺 ToDrinQ – EU Horizon Project (Grant Agreement No. 101082035)  
-* 🎓 Delft University of Technology (TU Delft)  
-* 💧 Waternet  
-
-The platform supports:
-
-* digital water treatment monitoring  
-* soft sensor deployment  
-* risk-based decision support  
-* modular and interoperable architectures  
-
----
-
-## 👩‍💻 Author
-
-**Akrivi Alexandraki**  
-- Engineering Doctorate Candidate – Delft University of Technology (TU Delft)  
-- Faculty of Civil Engineering, Sanitary Engineering
-- Tel: +30 694 203 8834 | +31 622 241 664
-
----
-
-## ⚠️ Disclaimer
-
-As of **22 April 2026**, the **only fully operational model integrated with real logic is**:
-
-* **SoSe #8 – Coagulation model (developed by KWR)**  
-
-All other models are:
-
-* structurally integrated  
-* connected to the risk framework  
-* currently using mock or pre-configured logic  
-
-⚠️ This list will be continuously updated as additional validated models are integrated and connected to real PIMS data.
+This is a research and demonstration decision-support platform. Mock data are explicitly labelled and will be replaced by mapped real-PIMS signals after connection and validation. Reference lines and risk thresholds must be confirmed with stakeholders for the relevant organism, temperature, units and operational setting before production decision-making.
