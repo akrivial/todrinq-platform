@@ -400,7 +400,7 @@ function riskBadgeClass(level) {
 // Sensor-specific threshold hints (colored dots, matching Coagulation card style)
 const SENSOR_HINTS = {
   "Inlet turbidity prediction": "Reference period 2022-2024: P5 7.8 FTU · P50 15 FTU · P90 23 FTU (top 10%) · P95 28 FTU. 20 FTU is an attention/reference line: be attentive for coagulation.",
-  "SoSe #10":   "&#128994; &ge;0.7 mg*min/L &nbsp;&middot;&nbsp; &#128993; 0.3&ndash;0.7 &nbsp;&middot;&nbsp; &#128308; &lt;0.3. CT scaling requires validation.",
+  "SoSe #10":   "Conservative demonstration comparison: at/above 2.9 mg O&#8323;&middot;min/L meets the selected US EPA Giardia 3-log reference at &le;1&deg;C; below 2.9 requires review. This is not an EU legal limit. Three distinct below-reference predictions are required to confirm High Risk.",
   "Bromate": "&#128994; &lt;5 ug/L &nbsp;&middot;&nbsp; &#128993; 5&ndash;10 ug/L &nbsp;&middot;&nbsp; &#128308; &ge;10 ug/L",
   "Microbial removal": "&#128994; &gt;1.2 log removal &nbsp;&middot;&nbsp; &#128993; 0.85&ndash;1.2 &nbsp;&middot;&nbsp; &#128308; &lt;0.85",
   "SoSe #11":   "&#128994; p &lt;0.15 &nbsp;&middot;&nbsp; &#128993; 0.15&ndash;0.40 &nbsp;&middot;&nbsp; &#128308; &ge;0.40",
@@ -506,7 +506,9 @@ function renderRichRisk(id, data) {
 
 function classifyCT(value) {
   if (value === null || value === undefined || Number.isNaN(value)) return "–";
-  return value >= 1.2 ? "At/above provisional 1.2 line" : "Below provisional 1.2 line";
+  return value >= 2.9
+    ? "At/above conservative EPA Giardia reference"
+    : "Below conservative EPA Giardia reference";
 }
 
 function updateCTDecisionSupport(data = {}) {
@@ -530,7 +532,7 @@ function updateCTDecisionSupport(data = {}) {
     decisionEl.textContent = "Awaiting both CT and microbial/log-removal predictions. No ozone-dose recommendation will be issued from CT alone while the target basis remains under validation.";
     return;
   }
-  decisionEl.innerHTML = `<strong>Joint result available for review.</strong> CT: ${Number(ct).toFixed(3)} mg*min/L; microbial removal: ${Number(microbial).toFixed(3)} log removal. The platform will not label disinfection adequate or recommend reducing ozone from these values until the organism-specific, temperature-dependent target and CT scaling are validated.`;
+  decisionEl.innerHTML = `<strong>Joint result available for review.</strong> CT: ${Number(ct).toFixed(3)} mg O&#8323;&middot;min/L; microbial removal: ${Number(microbial).toFixed(3)} log reduction. CT is compared with the conservative US EPA Giardia 3-log reference at &le;1&deg;C (2.9 mg O&#8323;&middot;min/L). This is a demonstration benchmark, not a universal or EU legal limit; Waternet must confirm the operational organism, log target and temperature-dependent reference.`;
 }
 
 // For combined responses (ozonation current, treatment, system)
@@ -1424,7 +1426,7 @@ function _riskDashboardEntries() {
     prediction: null,
     unit: "",
     displayPrediction: [
-      `CT ${_formatRiskValue(state.ozonation.ctPrediction, "mg*min/L", 3)}`,
+      `CT ${_formatRiskValue(state.ozonation.ctPrediction, "mg O₃·min/L", 3)}`,
       `Bromate ${_formatRiskValue(state.ozonation.bromatePrediction, "ug/L", 3)}`,
       `Microbial removal ${_formatRiskValue(state.ozonation.coliformPrediction, "log removal", 3)}`
     ].join(" | "),
@@ -1849,7 +1851,7 @@ function renderCTHourlyHistory(entries = loadStoredCTHistory()) {
   ctHistoryLabels = [...validationPairs.map(item => dateLabel(item.timestamp)), "NOW"];
   ctHistoryPred = [...validationPairs.map(item => item.predicted), current?.prediction ?? null];
   const measuredValues = [...validationPairs.map(item => item.measured), null];
-  ctHistoryRef = ctHistoryLabels.map(() => 1.2);
+  ctHistoryRef = ctHistoryLabels.map(() => 2.9);
 
   if (charts?.ctHistory) {
     charts.ctHistory.data.labels = ctHistoryLabels;
@@ -1861,7 +1863,7 @@ function renderCTHourlyHistory(entries = loadStoredCTHistory()) {
 
   const clock = document.getElementById("ct-history-clock");
   if (clock) {
-    const currentValue = current ? `${Number(current.prediction).toFixed(3)} mg*min/L` : "Awaiting current prediction";
+    const currentValue = current ? `${Number(current.prediction).toFixed(3)} mg O₃·min/L` : "Awaiting current prediction";
     const previous = validationPairs.map(item => {
       const sourceLabel = item.source?.startsWith("mock") ? "<em>MOCK SAMPLE</em>" : "<em>MEASURED</em>";
       const predictionText = item.predicted == null ? "prediction unavailable" : `Pred ${Number(item.predicted).toFixed(3)}`;
@@ -2071,7 +2073,7 @@ function makeCTHistoryChart(canvasId) {
           pointBackgroundColor: "#08a6bd"
         },
         {
-          label: "Provisional 1.2 validation line",
+          label: "Conservative EPA Giardia reference: 3-log at ≤1°C (2.9)",
           data: [],
           borderColor: "#2980b9",
           backgroundColor: "transparent",

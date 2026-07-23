@@ -140,7 +140,11 @@ SOSE9_HIGH_PERSISTENCE_COUNT = 3  # hourly exceedances required before operation
 COAGULATION_LOW_THRESHOLD    = 6.0   # NTU — Waternet operational boundary
 COAGULATION_MEDIUM_THRESHOLD = 9.0   # NTU — Waternet high-risk boundary
 COAGULATION_TURBIDITY_THRESHOLD = COAGULATION_LOW_THRESHOLD  # kept for RL classifier compat.
-CT_THRESHOLD = 0.7
+# Conservative demonstration benchmark from the selected US EPA ozone table:
+# 3-log Giardia inactivation at <=1 C. This is the strictest value in that
+# selected table, not a universal or EU legal CT limit. Waternet must confirm
+# the operational organism/log target and temperature-dependent calculation.
+CT_THRESHOLD = 2.9
 BROMATE_LOW     = 5.0   # µg/L — EU DWD compliance boundary
 BROMATE_HIGH    = 10.0  # µg/L — EU DWD limit
 BROMATE_THRESHOLD = BROMATE_HIGH
@@ -860,15 +864,11 @@ def classify_rl_risk(
 def classify_ct_risk(prediction: float):
     if prediction >= CT_THRESHOLD:
         likelihood_score = 2
-    elif prediction >= 0.3:
-        likelihood_score = 3
     else:
-        likelihood_score = 5
+        likelihood_score = 4
 
     if prediction >= CT_THRESHOLD:
         severity_score = 2
-    elif prediction >= 0.3:
-        severity_score = 3
     else:
         severity_score = 4
 
@@ -902,7 +902,10 @@ def classify_ct_risk(prediction: float):
             "Refine CT model calibration.",
             "Improve operational envelopes for ozone control.",
         ],
-        operator_message="Low CT values require immediate review of disinfection performance.",
+        operator_message=(
+            "CT is compared with a conservative US EPA Giardia benchmark "
+            "(3-log at <=1 C). This is not a universal or EU legal limit."
+        ),
         graph_payload={"ct_value": prediction},
     )
 
@@ -1406,8 +1409,10 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
     br_raw_level = br_level
     br_color, br_icon = _tl(br_level)
 
-    # CT: threshold = 0.7 mg/L·min; high <0.3, moderate 0.3-0.7, low ≥0.7
-    ct_level = "high" if data.ct_pred < 0.3 else ("moderate" if data.ct_pred < CT_THRESHOLD else "low")
+    # CT: conservative selected EPA Giardia reference = 2.9 mg O3*min/L.
+    # Runtime reliability converts the first two distinct below-reference
+    # predictions to Moderate warnings and confirms High on the third.
+    ct_level = "high" if data.ct_pred < CT_THRESHOLD else "low"
     ct_raw_level = ct_level
     ct_color, ct_icon = _tl(ct_level)
 

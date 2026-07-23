@@ -264,7 +264,7 @@ def ct_latest():
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"CT model unavailable or scaling requires validation: {str(e)}")
     storage = record_observation(
-        sensor_id="ct_exposure", value=pred, unit="mg*min/L",
+        sensor_id="ct_exposure", value=pred, unit="mg O3*min/L",
         observed_at=data["timestamp"], source="mock_pims", model_version="SoSe-10",
         metadata={"input": input_data, "validation_status": "under_validation"},
     )
@@ -272,10 +272,10 @@ def ct_latest():
         "display_name": SOSE_10["display_name"],
         "input_data": input_data,
         "prediction": pred,
-        "unit": "mg*min/L",
+        "unit": "mg O3*min/L",
         "timestamp": data["timestamp"],
         "resolution": "1h",
-        "validation_warning": "TODO(Akrivi/Greg/Alex): validate CT scaling and expected reference around 1.2 before operational display.",
+        "validation_warning": "Compared with a conservative US EPA Giardia reference (3-log at <=1 C: 2.9 mg O3*min/L). This is not a universal or EU legal limit; Waternet must confirm the operational target.",
         "persistence": storage,
     }
 
@@ -289,17 +289,17 @@ def ct(payload: CTInput):
 
     timestamp = datetime.now(timezone.utc).isoformat()
     storage = record_observation(
-        sensor_id="ct_exposure", value=pred, unit="mg*min/L",
+        sensor_id="ct_exposure", value=pred, unit="mg O3*min/L",
         observed_at=timestamp, source="manual", model_version="SoSe-10",
         metadata={"input": payload.dict(), "validation_status": "under_validation"},
     )
     return {
         "display_name": SOSE_10["display_name"],
         "prediction": pred,
-        "unit": "mg*min/L",
+        "unit": "mg O3*min/L",
         "timestamp": timestamp,
         "resolution": "1h",
-        "validation_warning": "TODO(Akrivi/Greg/Alex): validate CT scaling and expected reference around 1.2 before operational display.",
+        "validation_warning": "Compared with a conservative US EPA Giardia reference (3-log at <=1 C: 2.9 mg O3*min/L). This is not a universal or EU legal limit; Waternet must confirm the operational target.",
         "persistence": storage,
     }
 
@@ -321,7 +321,7 @@ def ct_mock_history(points: int = 5, interval_days: int = 10):
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"CT model unavailable during mock history generation: {exc}")
         prediction_storage = record_observation(
-            sensor_id="ct_exposure", value=prediction, unit="mg*min/L",
+            sensor_id="ct_exposure", value=prediction, unit="mg O3*min/L",
             observed_at=observed_at, source="mock_pims_validation_demo", model_version="SoSe-10",
             metadata={
                 "input": input_data,
@@ -335,7 +335,7 @@ def ct_mock_history(points: int = 5, interval_days: int = 10):
         measurement = generate_ct_measurement(observed_at, expected_ct=prediction)
         measured = measurement["CT_All"]
         measurement_storage = record_observation(
-            sensor_id="ct_exposure", value=measured, unit="mg*min/L",
+            sensor_id="ct_exposure", value=measured, unit="mg O3*min/L",
             observed_at=measurement["timestamp"], source=measurement["source"],
             model_version=None, kind="measurement",
             metadata={
@@ -350,7 +350,7 @@ def ct_mock_history(points: int = 5, interval_days: int = 10):
             "timestamp": observed_at,
             "prediction": prediction,
             "measurement": measured,
-            "unit": "mg*min/L",
+            "unit": "mg O3*min/L",
             "source": "mock_pims_ct_validation",
             "prediction_persistence": prediction_storage,
             "measurement_persistence": measurement_storage,
