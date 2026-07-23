@@ -18,6 +18,7 @@ from app.services.ozonation_predictions import (
     predict_bromate,
     predict_coliform,
 )
+from app.services.ct_reference import calculate_ct_reference
 from app.services.observation_store import record_observation
 
 router = APIRouter(tags=["Treatment Module"])
@@ -263,10 +264,11 @@ def ct_latest():
         pred = unwrap(predict_ct([payload_values(body, CT_FEATURES)]))
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"CT model unavailable or scaling requires validation: {str(e)}")
+    ct_reference = calculate_ct_reference(body.WaterTemperature)
     storage = record_observation(
         sensor_id="ct_exposure", value=pred, unit="mg O3*min/L",
         observed_at=data["timestamp"], source="mock_pims", model_version="SoSe-10",
-        metadata={"input": input_data, "validation_status": "under_validation"},
+        metadata={"input": input_data, "ct_reference": ct_reference, "validation_status": "under_validation"},
     )
     return {
         "display_name": SOSE_10["display_name"],
@@ -275,7 +277,8 @@ def ct_latest():
         "unit": "mg O3*min/L",
         "timestamp": data["timestamp"],
         "resolution": "1h",
-        "validation_warning": "Compared with a conservative US EPA Giardia reference (3-log at <=1 C: 2.9 mg O3*min/L). This is not a universal or EU legal limit; Waternet must confirm the operational target.",
+        "ct_reference": ct_reference,
+        "validation_warning": "Compared with the strictest temperature-dependent CT requirement calculated from the supervisor-provided tables and targets (1.5-log Giardia, 1.8-log virus, 2.1-log E. coli). This is a project operational reference, not a universal or EU legal limit.",
         "persistence": storage,
     }
 
@@ -288,10 +291,11 @@ def ct(payload: CTInput):
         raise HTTPException(status_code=503, detail=f"CT model unavailable or scaling requires validation: {str(e)}")
 
     timestamp = datetime.now(timezone.utc).isoformat()
+    ct_reference = calculate_ct_reference(payload.WaterTemperature)
     storage = record_observation(
         sensor_id="ct_exposure", value=pred, unit="mg O3*min/L",
         observed_at=timestamp, source="manual", model_version="SoSe-10",
-        metadata={"input": payload.dict(), "validation_status": "under_validation"},
+        metadata={"input": payload.dict(), "ct_reference": ct_reference, "validation_status": "under_validation"},
     )
     return {
         "display_name": SOSE_10["display_name"],
@@ -299,7 +303,8 @@ def ct(payload: CTInput):
         "unit": "mg O3*min/L",
         "timestamp": timestamp,
         "resolution": "1h",
-        "validation_warning": "Compared with a conservative US EPA Giardia reference (3-log at <=1 C: 2.9 mg O3*min/L). This is not a universal or EU legal limit; Waternet must confirm the operational target.",
+        "ct_reference": ct_reference,
+        "validation_warning": "Compared with the strictest temperature-dependent CT requirement calculated from the supervisor-provided tables and targets (1.5-log Giardia, 1.8-log virus, 2.1-log E. coli). This is a project operational reference, not a universal or EU legal limit.",
         "persistence": storage,
     }
 
@@ -320,11 +325,13 @@ def ct_mock_history(points: int = 5, interval_days: int = 10):
             prediction = unwrap(predict_ct([payload_values(body, CT_FEATURES)]))
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"CT model unavailable during mock history generation: {exc}")
+        ct_reference = calculate_ct_reference(body.WaterTemperature)
         prediction_storage = record_observation(
             sensor_id="ct_exposure", value=prediction, unit="mg O3*min/L",
             observed_at=observed_at, source="mock_pims_validation_demo", model_version="SoSe-10",
             metadata={
                 "input": input_data,
+                "ct_reference": ct_reference,
                 "demonstration": True,
                 "validation_status": "under_validation",
                 "sample_timestamp": observed_at,
@@ -350,6 +357,7 @@ def ct_mock_history(points: int = 5, interval_days: int = 10):
             "timestamp": observed_at,
             "prediction": prediction,
             "measurement": measured,
+            "ct_reference": ct_reference,
             "unit": "mg O3*min/L",
             "source": "mock_pims_ct_validation",
             "prediction_persistence": prediction_storage,

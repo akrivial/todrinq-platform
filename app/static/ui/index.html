@@ -946,7 +946,7 @@
 
       <article class="panel" style="margin-top:1rem;">
         <h4>Current CT prediction with 50-day validation context</h4>
-        <p class="muted-hint"><strong>Conservative demonstration reference:</strong> 2.9 mg O₃·min/L, corresponding to 3-log Giardia inactivation at ≤1°C in the selected US EPA ozone CT table. This is the strictest value in that selected Giardia table, not a universal CT threshold or an EU legal limit. Actual required CT changes with organism, log-inactivation target and water temperature; Waternet must confirm the operational reference before compliance use.</p>
+        <p class="muted-hint"><strong>Dynamic operational reference:</strong> the platform interpolates the supervisor-provided CT tables at the current water temperature for 1.5-log Giardia, 1.8-log virus and 2.1-log E. coli, then uses the highest requirement. The chart displays the governing organism and calculated value. This is a project operational reference, not a universal or EU legal limit.</p>
         <div id="ct-history-clock" class="ct-history-clock" aria-label="Previous hourly CT predictions leading to the current hour"></div>
         <div class="button-stack" style="margin:10px 0;">
           <button type="button" class="secondary-btn" id="btn-ct-mock-history">Load 5 Mock PIMS CT samples (previous 50 days)</button>

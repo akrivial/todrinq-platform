@@ -9,6 +9,7 @@ from app.services.ozonation_predictions import (
     predict_bromate,
     predict_coliform,
 )
+from app.services.ct_reference import calculate_ct_reference
 from app.services.observation_store import clear_risk_signal_history, record_risk_signal
 
 router = APIRouter(tags=["Risk Module"])
@@ -84,6 +85,7 @@ class OzonationOperationalInput(ReliabilityInput):
     bromate_pred: float
     ct_pred: float
     coliform_pred: float
+    water_temperature: float = 10.0
 
 
 class DistributionRiskInput(ReliabilityInput):
@@ -140,11 +142,8 @@ SOSE9_HIGH_PERSISTENCE_COUNT = 3  # hourly exceedances required before operation
 COAGULATION_LOW_THRESHOLD    = 6.0   # NTU — Waternet operational boundary
 COAGULATION_MEDIUM_THRESHOLD = 9.0   # NTU — Waternet high-risk boundary
 COAGULATION_TURBIDITY_THRESHOLD = COAGULATION_LOW_THRESHOLD  # kept for RL classifier compat.
-# Conservative demonstration benchmark from the selected US EPA ozone table:
-# 3-log Giardia inactivation at <=1 C. This is the strictest value in that
-# selected table, not a universal or EU legal CT limit. Waternet must confirm
-# the operational organism/log target and temperature-dependent calculation.
-CT_THRESHOLD = 2.9
+# CT uses the supervisor-provided temperature-dependent tables and selected
+# targets.  A fixed threshold would misrepresent warmer-water operation.
 BROMATE_LOW     = 5.0   # µg/L — EU DWD compliance boundary
 BROMATE_HIGH    = 10.0  # µg/L — EU DWD limit
 BROMATE_THRESHOLD = BROMATE_HIGH
@@ -861,13 +860,15 @@ def classify_rl_risk(
     )
 
 
-def classify_ct_risk(prediction: float):
-    if prediction >= CT_THRESHOLD:
+def classify_ct_risk(prediction: float, water_temperature: float):
+    reference = calculate_ct_reference(water_temperature)
+    threshold = reference["required_ct"]
+    if prediction >= threshold:
         likelihood_score = 2
     else:
         likelihood_score = 4
 
-    if prediction >= CT_THRESHOLD:
+    if prediction >= threshold:
         severity_score = 2
     else:
         severity_score = 4
@@ -882,14 +883,14 @@ def classify_ct_risk(prediction: float):
         hazard_id="insufficient_ct",
         hazard_description="Insufficient CT may compromise disinfection performance in the ozonation stage.",
         prediction=prediction,
-        threshold=CT_THRESHOLD,
+        threshold=threshold,
         likelihood=make_band(
             likelihood_score,
-            {"probability_proxy": round(max(0.0, CT_THRESHOLD - prediction), 3)},
+            {"probability_proxy": round(max(0.0, threshold - prediction), 3)},
         ),
         severity=make_band(
             severity_score,
-            {"deviation_ratio": round(prediction / CT_THRESHOLD, 3)},
+            {"deviation_ratio": round(prediction / threshold, 3)},
         ),
         consequence=make_band(consequence_score),
         overall_risk=overall,
@@ -903,10 +904,12 @@ def classify_ct_risk(prediction: float):
             "Improve operational envelopes for ozone control.",
         ],
         operator_message=(
-            "CT is compared with a conservative US EPA Giardia benchmark "
-            "(3-log at <=1 C). This is not a universal or EU legal limit."
+            f"CT is compared with the strictest supervisor-aligned requirement "
+            f"at {reference['calculation_temperature_c']} C: {threshold} mg O3*min/L "
+            f"({reference['governing_organism']}, "
+            f"{reference['target_log_removal']}-log target)."
         ),
-        graph_payload={"ct_value": prediction},
+        graph_payload={"ct_value": prediction, "ct_reference": reference},
     )
 
 
@@ -1267,7 +1270,7 @@ def ct_risk(data: CTInput):
                 data.Ozonedosage,
             ]])
         )
-        response = classify_ct_risk(pred)
+        response = classify_ct_risk(pred, data.WaterTemperature)
         return apply_runtime_reliability(
             response,
             sensor_key="ct",
@@ -1409,10 +1412,12 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
     br_raw_level = br_level
     br_color, br_icon = _tl(br_level)
 
-    # CT: conservative selected EPA Giardia reference = 2.9 mg O3*min/L.
+    # CT: strictest temperature-dependent result from the supervisor's tables.
     # Runtime reliability converts the first two distinct below-reference
     # predictions to Moderate warnings and confirms High on the third.
-    ct_level = "high" if data.ct_pred < CT_THRESHOLD else "low"
+    ct_reference = calculate_ct_reference(data.water_temperature)
+    ct_threshold = ct_reference["required_ct"]
+    ct_level = "high" if data.ct_pred < ct_threshold else "low"
     ct_raw_level = ct_level
     ct_color, ct_icon = _tl(ct_level)
 
@@ -1452,7 +1457,7 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
     # Bromate: p = predicted / threshold_max; higher prediction = higher probability of exceedance
     br_p = min(data.bromate_pred / BROMATE_HIGH, 1.0)
     # CT: p = max(0, (threshold - predicted) / threshold); lower CT = higher probability of failure
-    ct_p = max(0.0, (CT_THRESHOLD - data.ct_pred) / CT_THRESHOLD)
+    ct_p = max(0.0, (ct_threshold - data.ct_pred) / ct_threshold)
     # Coliform: p = max(0, (adequate - predicted) / adequate); lower removal = higher failure probability
     co_p = max(0.0, (COLIFORM_LOG_HIGH - data.coliform_pred) / COLIFORM_LOG_HIGH)
 
@@ -1472,7 +1477,7 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
     # Bromate: deviation above max threshold
     br_dev = max(0.0, (data.bromate_pred - BROMATE_HIGH) / BROMATE_HIGH)
     # CT: deviation below adequate threshold
-    ct_dev = max(0.0, (CT_THRESHOLD - data.ct_pred) / CT_THRESHOLD)
+    ct_dev = max(0.0, (ct_threshold - data.ct_pred) / ct_threshold)
     # Coliform: deviation below adequate log removal
     co_dev = max(0.0, (COLIFORM_LOG_HIGH - data.coliform_pred) / COLIFORM_LOG_HIGH)
 
@@ -1632,8 +1637,12 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
             "hazard": "CT / ozone exposure",
             "predicted_value": round(data.ct_pred, 3),
             "unit": "mg/L·min",
-            "threshold": CT_THRESHOLD,
-            "threshold_label": "Adequate CT",
+            "threshold": ct_threshold,
+            "threshold_label": (
+                f"Temperature-dependent target ({ct_reference['governing_organism']}, "
+                f"{ct_reference['target_log_removal']}-log at "
+                f"{ct_reference['calculation_temperature_c']} °C)"
+            ),
             "likelihood_p": round(ct_p, 3),
             "likelihood_class": ct_lh_cls,
             "likelihood_num": ct_lh_n,
@@ -1712,6 +1721,8 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
             "level": ct_level,
             "color": ct_color,
             "icon": ct_icon,
+            "threshold": ct_threshold,
+            "ct_reference": ct_reference,
             "reliability": reliability_components["ct"]["reliability"],
         },
         "risk_table": risk_table,

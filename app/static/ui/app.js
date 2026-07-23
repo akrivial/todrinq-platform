@@ -97,6 +97,7 @@ const state = {
   ozonation: {
     ctInput: null,
     ctPrediction: null,
+    ctReference: null,
     bromateInput: null,
     bromatePrediction: null,
     coliformInput: null,
@@ -400,7 +401,7 @@ function riskBadgeClass(level) {
 // Sensor-specific threshold hints (colored dots, matching Coagulation card style)
 const SENSOR_HINTS = {
   "Inlet turbidity prediction": "Reference period 2022-2024: P5 7.8 FTU · P50 15 FTU · P90 23 FTU (top 10%) · P95 28 FTU. 20 FTU is an attention/reference line: be attentive for coagulation.",
-  "SoSe #10":   "Conservative demonstration comparison: at/above 2.9 mg O&#8323;&middot;min/L meets the selected US EPA Giardia 3-log reference at &le;1&deg;C; below 2.9 requires review. This is not an EU legal limit. Three distinct below-reference predictions are required to confirm High Risk.",
+  "SoSe #10":   "Temperature-dependent comparison using the strictest result from the supervisor-provided targets: 1.5-log Giardia, 1.8-log virus and 2.1-log E. coli. Three distinct below-reference predictions are required to confirm High Risk.",
   "Bromate": "&#128994; &lt;5 ug/L &nbsp;&middot;&nbsp; &#128993; 5&ndash;10 ug/L &nbsp;&middot;&nbsp; &#128308; &ge;10 ug/L",
   "Microbial removal": "&#128994; &gt;1.2 log removal &nbsp;&middot;&nbsp; &#128993; 0.85&ndash;1.2 &nbsp;&middot;&nbsp; &#128308; &lt;0.85",
   "SoSe #11":   "&#128994; p &lt;0.15 &nbsp;&middot;&nbsp; &#128993; 0.15&ndash;0.40 &nbsp;&middot;&nbsp; &#128308; &ge;0.40",
@@ -504,11 +505,13 @@ function renderRichRisk(id, data) {
     </div>`;
 }
 
-function classifyCT(value) {
+function classifyCT(value, reference = state.ozonation.ctReference) {
   if (value === null || value === undefined || Number.isNaN(value)) return "–";
-  return value >= 2.9
-    ? "At/above conservative EPA Giardia reference"
-    : "Below conservative EPA Giardia reference";
+  const threshold = Number(reference?.required_ct);
+  if (!Number.isFinite(threshold)) return "Reference unavailable";
+  return value >= threshold
+    ? "At/above temperature-dependent CT reference"
+    : "Below temperature-dependent CT reference";
 }
 
 function updateCTDecisionSupport(data = {}) {
@@ -532,7 +535,11 @@ function updateCTDecisionSupport(data = {}) {
     decisionEl.textContent = "Awaiting both CT and microbial/log-removal predictions. No ozone-dose recommendation will be issued from CT alone while the target basis remains under validation.";
     return;
   }
-  decisionEl.innerHTML = `<strong>Joint result available for review.</strong> CT: ${Number(ct).toFixed(3)} mg O&#8323;&middot;min/L; microbial removal: ${Number(microbial).toFixed(3)} log reduction. CT is compared with the conservative US EPA Giardia 3-log reference at &le;1&deg;C (2.9 mg O&#8323;&middot;min/L). This is a demonstration benchmark, not a universal or EU legal limit; Waternet must confirm the operational organism, log target and temperature-dependent reference.`;
+  const reference = data.ct_reference || state.ozonation.ctReference;
+  const referenceText = reference
+    ? `${Number(reference.required_ct).toFixed(3)} mg O&#8323;&middot;min/L at ${Number(reference.calculation_temperature_c).toFixed(1)}&deg;C, governed by ${escapeHtml(reference.governing_organism)} (${reference.target_log_removal}-log)`
+    : "not available";
+  decisionEl.innerHTML = `<strong>Joint result available for review.</strong> CT: ${Number(ct).toFixed(3)} mg O&#8323;&middot;min/L; microbial removal: ${Number(microbial).toFixed(3)} log reduction. Dynamic CT reference: ${referenceText}. The highest requirement among the supervisor-selected Giardia, virus and E. coli targets is used.`;
 }
 
 // For combined responses (ozonation current, treatment, system)
@@ -1778,6 +1785,7 @@ async function runAutomaticOzonationRisk() {
       bromate_pred: brPred,
       ct_pred: ctPred,
       coliform_pred: colPred,
+      water_temperature: Number(state.ozonation.ctInput?.WaterTemperature ?? 10),
     });
     state.ozonation.operationalRisk = opData;
     renderOzonationOperational(opData, "oz-inline-risk", "oz-full-risk");
@@ -1804,6 +1812,44 @@ let ctHistoryLabels = [], ctHistoryPred = [], ctHistoryRef = [];
 let bromateHistoryLabels = [], bromateHistoryPred = [];
 let coliformHistoryLabels = [], coliformHistoryPred = [];
 const CT_HISTORY_STORAGE_KEY = "todrinq.ct.hourly-history.v1";
+
+function calculateSupervisorCTReference(waterTemperature) {
+  const temperature = Math.max(1, Math.min(25, Number(waterTemperature)));
+  if (!Number.isFinite(temperature)) return null;
+  const temperatures = [1, 5, 10, 15, 20, 25];
+  // These are the supervisor-selected log targets after interpolation by log:
+  // Giardia 1.5-log, virus 1.8-log, and E. coli 2.1-log.
+  const targetRows = {
+    giardia: { log: 1.5, values: [1.5, 0.95, 0.72, 0.48, 0.36, 0.24] },
+    virus:   { log: 1.8, values: [0.812, 0.54, 0.452, 0.272, 0.226, 0.138] },
+    e_coli:  { log: 2.1, values: [1.0, 0.68, 0.504, 0.336, 0.252, 0.168] },
+  };
+  const upperIndex = temperatures.findIndex(value => value >= temperature);
+  const lowerIndex = upperIndex <= 0 ? 0 : upperIndex - 1;
+  const interpolateRow = row => {
+    const x1 = temperatures[lowerIndex];
+    const x2 = temperatures[upperIndex];
+    const y1 = row.values[lowerIndex];
+    const y2 = row.values[upperIndex];
+    return x1 === x2 ? y1 : y1 + ((temperature - x1) * (y2 - y1)) / (x2 - x1);
+  };
+  const requirements = Object.fromEntries(
+    Object.entries(targetRows).map(([organism, row]) => [
+      organism, { target_log_removal: row.log, required_ct: interpolateRow(row) }
+    ])
+  );
+  const governing_organism = Object.keys(requirements)
+    .reduce((best, organism) =>
+      requirements[organism].required_ct > requirements[best].required_ct ? organism : best
+    );
+  return {
+    required_ct: requirements[governing_organism].required_ct,
+    governing_organism,
+    target_log_removal: requirements[governing_organism].target_log_removal,
+    calculation_temperature_c: temperature,
+    requirements,
+  };
+}
 
 function ctHourKey(value) {
   // Mock-PIMS historically returned naive UTC timestamps. Treat an ISO string
@@ -1832,6 +1878,8 @@ function renderCTHourlyHistory(entries = loadStoredCTHistory()) {
     ...item,
     prediction: Number(item.prediction ?? item.value),
     kind: item.kind || "prediction",
+    ct_reference: item.ct_reference ||
+      calculateSupervisorCTReference(item.water_temperature),
   })).filter(item => item.timestamp && Number.isFinite(item.prediction));
   const predictions = normalized.filter(item => item.kind === "prediction");
   const measurementByTime = new Map();
@@ -1851,9 +1899,28 @@ function renderCTHourlyHistory(entries = loadStoredCTHistory()) {
   ctHistoryLabels = [...validationPairs.map(item => dateLabel(item.timestamp)), "NOW"];
   ctHistoryPred = [...validationPairs.map(item => item.predicted), current?.prediction ?? null];
   const measuredValues = [...validationPairs.map(item => item.measured), null];
-  ctHistoryRef = ctHistoryLabels.map(() => 2.9);
+  const referenceByTime = new Map(predictions.map(item => [
+    new Date(item.timestamp).getTime(),
+    Number(item.ct_reference?.required_ct)
+  ]));
+  const currentReference = Number(current?.ct_reference?.required_ct ?? state.ozonation.ctReference?.required_ct);
+  ctHistoryRef = [
+    ...validationPairs.map(item => {
+      const value = referenceByTime.get(new Date(item.timestamp).getTime());
+      return Number.isFinite(value) ? value : null;
+    }),
+    Number.isFinite(currentReference) ? currentReference : null,
+  ];
 
   if (charts?.ctHistory) {
+    const reference = current?.ct_reference || state.ozonation.ctReference;
+    const organism = String(reference?.governing_organism || "organism")
+      .replace("e_coli", "E. coli")
+      .replace("giardia", "Giardia")
+      .replace("virus", "virus");
+    charts.ctHistory.data.datasets[2].label = Number.isFinite(Number(reference?.required_ct))
+      ? `Dynamic reference: ${organism} ${reference.target_log_removal}-log at ${Number(reference.calculation_temperature_c).toFixed(1)}°C (${Number(reference.required_ct).toFixed(3)})`
+      : "Dynamic CT reference (strictest supervisor-selected target)";
     charts.ctHistory.data.labels = ctHistoryLabels;
     charts.ctHistory.data.datasets[0].data = ctHistoryPred;
     charts.ctHistory.data.datasets[1].data = measuredValues;
@@ -1872,9 +1939,13 @@ function renderCTHourlyHistory(entries = loadStoredCTHistory()) {
     const issuedAt = current?.timestamp
       ? new Date(/(Z|[+-]\d{2}:?\d{2})$/i.test(current.timestamp) ? current.timestamp : `${current.timestamp}Z`).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
       : "not issued yet";
+    const reference = current?.ct_reference || state.ozonation.ctReference;
+    const referenceLine = Number.isFinite(Number(reference?.required_ct))
+      ? `<small>Required CT: ${Number(reference.required_ct).toFixed(3)} mg O₃·min/L · ${escapeHtml(String(reference.governing_organism).replace("e_coli", "E. coli"))} ${reference.target_log_removal}-log · ${Number(reference.calculation_temperature_c).toFixed(1)}°C</small>`
+      : "<small>Required CT awaiting water temperature</small>";
     clock.innerHTML = `<div class="ct-current-focus">
       <span class="clock">🕒</span>
-      <span class="copy"><small>NOW · <span id="ct-now-live-clock">${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span></small><strong>${currentValue}</strong><small>Prediction issued: ${issuedAt}</small></span>
+      <span class="copy"><small>NOW · <span id="ct-now-live-clock">${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span></small><strong>${currentValue}</strong><small>Prediction issued: ${issuedAt}</small>${referenceLine}</span>
     </div><div class="ct-previous-strip ct-five-samples">${previous || "<div class='placeholder-box'>Awaiting CT validation samples.</div>"}</div>`;
   }
 }
@@ -1889,12 +1960,12 @@ function updateCTNowClock() {
 }
 setInterval(updateCTNowClock, 1000);
 
-function recordCTHourlyPrediction(prediction, timestamp) {
+function recordCTHourlyPrediction(prediction, timestamp, ctReference = state.ozonation.ctReference) {
   if (!Number.isFinite(Number(prediction))) return;
   const entries = loadStoredCTHistory();
   const key = ctHourKey(timestamp || new Date());
   const next = entries.filter(item => ctHourKey(item.timestamp) !== key);
-  next.push({ timestamp: timestamp || new Date().toISOString(), prediction: Number(prediction) });
+  next.push({ timestamp: timestamp || new Date().toISOString(), prediction: Number(prediction), ct_reference: ctReference });
   next.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   const retained = next.slice(-48);
   try { localStorage.setItem(CT_HISTORY_STORAGE_KEY, JSON.stringify(retained)); } catch (_) {}
@@ -1909,6 +1980,8 @@ async function loadCTDatabaseHistory() {
       value: Number(item.value),
       kind: item.kind,
       source: item.source,
+      ct_reference: item.metadata?.ct_reference,
+      water_temperature: item.metadata?.input?.WaterTemperature,
     }));
     renderCTHourlyHistory(entries);
   } catch (error) {
@@ -2073,7 +2146,7 @@ function makeCTHistoryChart(canvasId) {
           pointBackgroundColor: "#08a6bd"
         },
         {
-          label: "Conservative EPA Giardia reference: 3-log at ≤1°C (2.9)",
+          label: "Dynamic CT reference (strictest supervisor-selected target)",
           data: [],
           borderColor: "#2980b9",
           backgroundColor: "transparent",
@@ -3174,6 +3247,7 @@ document.getElementById("form-ct")?.addEventListener("submit", async (e) => {
     const predictionTimestamp = data.timestamp || new Date().toISOString();
     state.ozonation.ctInput = { ...payload, prediction_timestamp: predictionTimestamp };
     state.ozonation.ctPrediction = pred;
+    state.ozonation.ctReference = data.ct_reference || null;
     state.ozonation.lastTimestamp = predictionTimestamp;
 
     setText("ct-prediction", pred, 3);
@@ -3188,7 +3262,7 @@ document.getElementById("form-ct")?.addEventListener("submit", async (e) => {
     }
 
     latestOzonation.ct = pred;
-    recordCTHourlyPrediction(pred, predictionTimestamp);
+    recordCTHourlyPrediction(pred, predictionTimestamp, data.ct_reference);
     refreshOzonationDashboard();
 
     // Individual CT risk card
@@ -3307,6 +3381,7 @@ async function updateLiveOzonationOnce() {
     const ctInput = { ...ctData.input_data, prediction_timestamp: ctData.timestamp };
     state.ozonation.ctInput = ctInput;
     state.ozonation.ctPrediction = ctPred;
+    state.ozonation.ctReference = ctData.ct_reference || null;
     state.ozonation.lastTimestamp = ctData.timestamp || state.ozonation.lastTimestamp;
 
     setValue("ct_Chamber", ctInput.Chamber);
@@ -3320,7 +3395,7 @@ async function updateLiveOzonationOnce() {
     updateCTDecisionSupport(ctData);
     if (charts.ct) { charts.ct.data.datasets[0].data = [ctPred ?? 0]; charts.ct.update(); }
     latestOzonation.ct = ctPred;
-    recordCTHourlyPrediction(ctPred, ctData.timestamp);
+    recordCTHourlyPrediction(ctPred, ctData.timestamp, ctData.ct_reference);
     setBadge("ct-mode-badge", `Mode: demonstration (mock; 1h) — ${ctData.timestamp?.slice(11, 16) ?? ""}`, "info");
     try { renderRichRisk("ct-risk-card", await postJSON(ENDPOINTS.riskCT, ctData.input_data)); } catch(_) {}
   } catch (err) {
