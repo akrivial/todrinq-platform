@@ -199,7 +199,27 @@ def predict_bromate(X: list) -> float:
 
 
 def predict_coliform(X: list) -> float:
-    return _predict_from_list("Coliform", X)
+    """Return the conventional positive coliform log10 reduction.
+
+    The delivered AdaBoost artifact predicts the Holm kinetic coefficient,
+    not the final log removal. Greg's original inference script combines that
+    coefficient with ozone log-mean concentration and hydraulic residence
+    time. The UI reports positive log10(N_in/N_out).
+    """
+    k_pred = _predict_from_list("Coliform", X)
+    row = X[0]
+    flow_rate = float(row[3])
+    ozone_dosage = float(row[4])
+    if flow_rate <= 0 or ozone_dosage <= 0.012:
+        return 0.0
+
+    residence_time_minutes = (573.86 * 60.0) / flow_rate
+    ozone_logmean = (
+        (ozone_dosage - 0.012)
+        / np.log10(ozone_dosage / 0.012)
+    )
+    log_reduction = k_pred * ozone_logmean * residence_time_minutes**2
+    return float(max(0.0, log_reduction))
 
 
 # -------------------------------------------------------------------

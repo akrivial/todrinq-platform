@@ -80,15 +80,17 @@ def generate_bromate_data():
 
 
 def generate_coliform_data():
+    # Demonstration values follow the delivered scaler's training range.
+    # The future real-PIMS connector will provide the same named fields.
     return {
         "timestamp": datetime.utcnow().isoformat(),
-        "Chamber": round(random.uniform(1, 4), 2),
+        "Chamber": random.randint(1, 4),
         "WaterTemperature": round(random.uniform(5.0, 22.0), 2),
-        "RFTurbidity": round(random.uniform(0.1, 5.0), 2),
-        "FlowRate": round(random.uniform(100.0, 500.0), 2),
-        "Ozonedosage": round(random.uniform(0.5, 5.0), 2),
-        "RFturbidity_1": round(random.uniform(0.1, 5.0), 2),
-        "CT_All": round(random.uniform(5.0, 40.0), 2),
+        "RFTurbidity": round(random.uniform(0.04, 0.30), 3),
+        "FlowRate": round(random.uniform(1750.0, 2350.0), 2),
+        "Ozonedosage": round(random.uniform(0.55, 0.95), 3),
+        "RFturbidity_1": round(random.uniform(0.04, 0.30), 3),
+        "CT_All": round(random.uniform(0.15, 1.30), 3),
     }
 
 

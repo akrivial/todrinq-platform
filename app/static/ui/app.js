@@ -26,6 +26,7 @@ const ENDPOINTS = {
   treatmentBactoSense: "/treatment/hard-sensors/bactosense-4/latest",
   ctObservationHistory: "/observations/history?sensor_id=ct_exposure&limit=200",
   bromateObservationHistory: "/observations/history?sensor_id=bromate_outlet&limit=200",
+  coliformObservationHistory: "/observations/history?sensor_id=microbial_log_reduction&limit=200",
   rwsLatest: "/source/hard-sensors/rws/latest",
   rwsTimeseries: "/source/hard-sensors/rws/timeseries",
 
@@ -2139,6 +2140,53 @@ async function loadBromateDatabaseHistory() {
   }
 }
 
+function renderColiformDatabaseHistory(items = []) {
+  const parseObservedAt = value => {
+    const normalized = typeof value === "string" &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) &&
+      !/(Z|[+-]\d{2}:?\d{2})$/i.test(value) ? `${value}Z` : value;
+    return new Date(normalized);
+  };
+  const latestByHour = new Map();
+  items
+    .filter(item => item.kind === "prediction" && Number.isFinite(Number(item.value)))
+    .sort((a, b) => parseObservedAt(a.observed_at) - parseObservedAt(b.observed_at))
+    .forEach(item => {
+      const date = parseObservedAt(item.observed_at);
+      date.setMinutes(0, 0, 0);
+      latestByHour.set(date.getTime(), Number(item.value));
+    });
+
+  const now = new Date();
+  now.setMinutes(0, 0, 0);
+  const hours = Array.from(
+    { length: 7 },
+    (_, index) => new Date(now.getTime() + (index - 6) * 60 * 60 * 1000),
+  );
+  coliformHistoryLabels = hours.map((date, index) => index === hours.length - 1
+    ? "NOW"
+    : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+  coliformHistoryPred = hours.map(date => latestByHour.get(date.getTime()) ?? null);
+
+  [charts?.coliformHistory, charts?.coliformHistoryRisk].forEach(chart => {
+    if (!chart) return;
+    chart.data.labels = [...coliformHistoryLabels];
+    chart.data.datasets[0].data = [...coliformHistoryPred];
+    chart.update();
+  });
+}
+
+async function loadColiformDatabaseHistory() {
+  try {
+    const data = await getJSON(ENDPOINTS.coliformObservationHistory);
+    renderColiformDatabaseHistory(data.items || []);
+    setBadge("coliform-history-badge", "History: stored log-reduction predictions", "info");
+  } catch (error) {
+    console.warn("Coliform database history unavailable.", error);
+    setBadge("coliform-history-badge", "History unavailable", "high");
+  }
+}
+
 function updateBromateClock() {
   const element = document.getElementById("bromate-now-clock");
   if (element) element.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -2446,6 +2494,7 @@ renderCTHourlyHistory();
 loadCTDatabaseHistory();
 loadCoagulationDatabaseHistory();
 loadBromateDatabaseHistory();
+loadColiformDatabaseHistory();
 
 // sose9 chart is created on first use (canvas is inside display:none screen at load time)
 charts.sose9 = null;
@@ -3216,7 +3265,7 @@ document.getElementById("form-coliform")?.addEventListener("submit", async (e) =
     }
 
     latestOzonation.coliform = pred;
-    pushOzonationHistory(charts.coliformHistory, coliformHistoryLabels, null, coliformHistoryPred, pred, null, null);
+    await loadColiformDatabaseHistory();
     refreshOzonationDashboard();
 
     // Individual coliform risk card
@@ -3337,8 +3386,7 @@ async function updateLiveOzonationOnce() {
     updateCTDecisionSupport(colData);
     if (charts.coliform) { charts.coliform.data.datasets[0].data = [colPred ?? 0]; charts.coliform.update(); }
     latestOzonation.coliform = colPred;
-    pushOzonationHistory(charts.coliformHistory, coliformHistoryLabels, colData.timestamp?.slice(11, 19), coliformHistoryPred, colPred, null, null);
-    pushOzonationHistory(charts.coliformHistoryRisk, coliformHistoryLabels, colData.timestamp?.slice(11, 19), [...coliformHistoryPred], colPred, null, null);
+    await loadColiformDatabaseHistory();
     setBadge("coliform-mode-badge", "Mode: demonstration (mock; 1h model context)", "info");
   } catch (err) {
     console.error("Coliform demonstration error:", err);

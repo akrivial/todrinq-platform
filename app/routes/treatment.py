@@ -417,18 +417,28 @@ def coliform_latest():
     data = generate_coliform_data()
     input_data = {k: v for k, v in data.items() if k != "timestamp"}
     try:
+        # Reproduce the delivered chained inference workflow: CT is predicted
+        # first from the same process inputs, then supplied to the Holm model.
+        ct_input = CTInput(**input_data)
+        input_data["CT_All"] = unwrap(
+            predict_ct([payload_values(ct_input, CT_FEATURES)])
+        )
         body = ColiformInput(**input_data)
         pred = unwrap(predict_coliform([payload_values(body, COLIFORM_FEATURES)]))
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Coliform/microbial-removal model unavailable: {str(e)}")
-    storage = record_observation(sensor_id="microbial_log_removal", value=pred,
-        unit="dimensionless log removal", observed_at=data["timestamp"], source="mock_pims",
-        model_version="SoSe-10.2", metadata={"input": input_data})
+    storage = record_observation(sensor_id="microbial_log_reduction", value=pred,
+        unit="log10 reduction", observed_at=data["timestamp"], source="mock_pims",
+        model_version="SoSe-10.2-holm", metadata={
+            "input": input_data,
+            "interpretation": "positive log10(N_in/N_out)",
+            "calculation": "Holm coefficient model plus ozone log-mean and hydraulic residence time",
+        })
     return {
         "display_name": SOSE_102["display_name"],
         "input_data": input_data,
         "prediction": pred,
-        "unit": "dimensionless log removal",
+        "unit": "log10 reduction",
         "timestamp": data["timestamp"],
         "resolution": "1h",
         "persistence": storage,
@@ -442,13 +452,17 @@ def coliform(payload: ColiformInput):
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Coliform/microbial-removal model unavailable: {str(e)}")
     timestamp = datetime.now(timezone.utc).isoformat()
-    storage = record_observation(sensor_id="microbial_log_removal", value=pred,
-        unit="dimensionless log removal", observed_at=timestamp, source="manual",
-        model_version="SoSe-10.2", metadata={"input": payload.dict()})
+    storage = record_observation(sensor_id="microbial_log_reduction", value=pred,
+        unit="log10 reduction", observed_at=timestamp, source="manual",
+        model_version="SoSe-10.2-holm", metadata={
+            "input": payload.dict(),
+            "interpretation": "positive log10(N_in/N_out)",
+            "calculation": "Holm coefficient model plus ozone log-mean and hydraulic residence time",
+        })
     return {
         "display_name": SOSE_102["display_name"],
         "prediction": pred,
-        "unit": "dimensionless log removal",
+        "unit": "log10 reduction",
         "timestamp": timestamp,
         "persistence": storage,
     }
