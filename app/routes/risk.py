@@ -152,20 +152,20 @@ COLIFORM_LOG_MODERATE = 0.85  # log removal — warning zone
 COLIFORM_THRESHOLD = COLIFORM_LOG_HIGH
 AEROMONAS_THRESHOLD = 0.3
 
-# Runtime reliability rules. High-risk persistence is intentionally separate
-# from scientific/model thresholds: it protects operators from a single spike.
-# These defaults must be validated with Waternet before production deployment.
+# Runtime data-quality rules. Persistence is not applied here: the validated
+# three-hour predicted-exceedance rule is implemented separately for SoSe #9.
+# Waternet PIMS/SCADA-dependent risk inputs use the ten-minute freshness rule.
 RELIABILITY_RULES = {
-    "coagulation": {"high_persistence": 3, "valid_range": (0.0, 100.0), "max_step": 12.0, "max_age_minutes": 90},
-    "ct":          {"high_persistence": 3, "valid_range": (0.0, 20.0),  "max_step": 3.0,  "max_age_minutes": 90},
-    "bromate":     {"high_persistence": 3, "valid_range": (0.0, 100.0), "max_step": 10.0, "max_age_minutes": 90},
-    "coliform":    {"high_persistence": 3, "valid_range": (0.0, 10.0),  "max_step": 2.0,  "max_age_minutes": 90},
-    "distribution": {"high_persistence": 3, "valid_range": (0.0, 1.0), "max_step": 0.5,  "max_age_minutes": 90},
+    "coagulation": {"high_persistence": 1, "valid_range": (0.0, 100.0), "max_step": 12.0, "max_age_minutes": 10},
+    "ct":          {"high_persistence": 1, "valid_range": (0.0, 20.0),  "max_step": 3.0,  "max_age_minutes": 10},
+    "bromate":     {"high_persistence": 1, "valid_range": (0.0, 100.0), "max_step": 10.0, "max_age_minutes": 10},
+    "coliform":    {"high_persistence": 1, "valid_range": (0.0, 10.0),  "max_step": 2.0,  "max_age_minutes": 10},
+    "distribution": {"high_persistence": 1, "valid_range": (0.0, 1.0), "max_step": 0.5,  "max_age_minutes": 10},
     # The live UI calls the detailed and operational ozonation endpoints in
     # one cycle. Separate histories prevent one prediction being counted twice.
-    "bromate_operational": {"high_persistence": 3, "valid_range": (0.0, 100.0), "max_step": 10.0, "max_age_minutes": 90},
-    "ct_operational":      {"high_persistence": 3, "valid_range": (0.0, 20.0),  "max_step": 3.0,  "max_age_minutes": 90},
-    "coliform_operational": {"high_persistence": 3, "valid_range": (0.0, 10.0), "max_step": 2.0,  "max_age_minutes": 90},
+    "bromate_operational": {"high_persistence": 1, "valid_range": (0.0, 100.0), "max_step": 10.0, "max_age_minutes": 10},
+    "ct_operational":      {"high_persistence": 1, "valid_range": (0.0, 20.0),  "max_step": 3.0,  "max_age_minutes": 10},
+    "coliform_operational": {"high_persistence": 1, "valid_range": (0.0, 10.0), "max_step": 2.0,  "max_age_minutes": 10},
 }
 RELIABILITY_HISTORY: dict[str, list[dict]] = {key: [] for key in RELIABILITY_RULES}
 
@@ -205,10 +205,9 @@ def apply_runtime_reliability(
 ) -> dict:
     """Attach quality/persistence state and return the effective risk class.
 
-    Maintenance, invalid and stale results are not risk-producing. A first High
-    remains Moderate until the configured number of consecutive High results is
-    reached. The history is an in-process demo store and should be externalised
-    for multi-instance production deployment.
+    Maintenance, invalid and stale results are not risk-producing. Persistence
+    is one unless a separately validated sensor-specific rule says otherwise;
+    SoSe #9 persistence is implemented in its dedicated source-risk workflow.
     """
     rule = RELIABILITY_RULES[sensor_key]
     history = RELIABILITY_HISTORY[sensor_key]

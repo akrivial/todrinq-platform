@@ -41,13 +41,6 @@ PARAMETERS = {
         "unitCode": "MQS",
         "compartment": "OW",
     },
-    "chloride": {
-        "code": "CL",
-        "label": "Chloride concentration",
-        "unit": "mg/L",
-        "unitCode": "M1",
-        "compartment": "OW",
-    },
 }
 
 
@@ -76,7 +69,6 @@ LOCATIONS = {
             "water_temperature",
             "water_level",
             "discharge",
-            "chloride",
         ],
     },
     "nieuwegein_doorslag": {
@@ -161,12 +153,22 @@ def fetch_rws_observations(
         },
     }
 
-    response = requests.post(
-        OBSERVATIONS_URL,
-        json=payload,
-        headers={"Content-Type": "application/json"},
-        timeout=30,
-    )
+    try:
+        response = requests.post(
+            OBSERVATIONS_URL,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        return {
+            "status_code": None,
+            "content_type": None,
+            "url": OBSERVATIONS_URL,
+            "payload_sent": payload,
+            "response": None,
+            "connection_error": str(exc),
+        }
 
     try:
         data = response.json()
@@ -285,6 +287,15 @@ def get_latest_rws_value(
         days_back=7,
     )
 
+    if result["status_code"] == 204:
+        return {
+            "status": "no_data",
+            "sensor_type": parameter,
+            "location": selected_location["code"],
+            "station_name": selected_location["label"],
+            "message": "No measurements available",
+        }
+
     if result["status_code"] != 200:
         return {
             "status": "error",
@@ -329,6 +340,20 @@ def get_rws_timeseries(
         days_back=days_back,
     )
 
+    if result["status_code"] == 204:
+        return {
+            "status": "no_data",
+            "sensor_type": parameter,
+            "location": selected_location["code"],
+            "station_name": selected_location["label"],
+            "label": selected_parameter["label"],
+            "unit": selected_parameter["unit"],
+            "days_back": days_back,
+            "count": 0,
+            "timeseries": [],
+            "message": "No measurements available",
+        }
+
     if result["status_code"] != 200:
         return {
             "status": "error",
@@ -359,7 +384,6 @@ ATTRIBUTE_MAP = {
     "water_temperature": "waterTemperature",
     "water_level": "waterLevel",
     "discharge": "discharge",
-    "chloride": "chlorideConcentration",
 }
 
 

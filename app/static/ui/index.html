@@ -49,12 +49,17 @@
         screens, demonstration/mock PIMS support, and risk translation endpoints. It preserves placeholders
         for future hard-sensor and model expansion while keeping the currently active screens usable.
       </p>
+      <p>
+        The PIMS connector was developed and technically tested by Waternet.
+        Full commissioning of the complete platform in Waternet’s production environment remains future work.
+        The platform is advisory decision support and is not an autonomous production-control system.
+      </p>
     </section>
 
     <section class="architecture-row">
-      <button class="module-tile" data-nav="screen-home">
+      <button class="module-tile module-tile--home" data-nav="screen-home">
         <span class="module-name">ToDrinQ Platform / Home Page</span>
-        <span class="module-desc">Platform overview, active services, and architecture summary</span>
+        <span class="module-desc">Platform overview, active services, and the Waternet treatment chain</span>
       </button>
 
       <button class="module-tile" data-nav="screen-source">
@@ -103,67 +108,75 @@
         </div>
       </div>
 
-      <!-- Module cards -->
-      <div class="home-modules">
-        <div class="home-module-card" data-nav="screen-source">
-          <div class="home-module-stripe" style="background:#0ab4c8;"></div>
-          <div class="home-module-name">&#128167; Source</div>
-          <div class="home-module-desc">Early inlet turbidity prediction and source quality monitoring at Waternet DC1.</div>
-          <div class="home-module-tag">
-            <span class="home-module-pill">SoSe #9</span>
-            <span class="home-module-pill">RWS monitoring</span>
+      <!-- Non-clickable Waternet source-to-tap process explanation -->
+      <section class="water-chain" aria-labelledby="water-chain-title">
+        <div class="water-chain-head">
+          <div>
+            <span class="water-chain-kicker">WATERNET DRINKING-WATER PROCESS</span>
+            <h3 id="water-chain-title">From source water to safe drinking water</h3>
+            <p>The treatment journey and the digital decision-support layer, shown as one continuous chain.</p>
           </div>
+          <div class="water-chain-legend"><span></span> Water flow</div>
         </div>
 
-        <div class="home-module-card" data-nav="screen-treatment">
-          <div class="home-module-stripe" style="background:#0568a0;"></div>
-          <div class="home-module-name">&#9881; Treatment</div>
-          <div class="home-module-desc">Coagulation turbidity prediction, RL-based FeCl&#8323; dosage optimisation, and full ozonation suite.</div>
-          <div class="home-module-tag">
-            <span class="home-module-pill">SoSe #8</span>
-            <span class="home-module-pill">RL #5</span>
-            <span class="home-module-pill">SoSe #10/10.1/10.2</span>
-          </div>
+        <div class="water-chain-track">
+          <article class="water-chain-stage">
+            <img src="/static/ui/assets/risk_intake_lek_canal.png" alt="Raw-water intake from the Lek Canal" />
+            <div class="water-chain-number">01</div>
+            <div class="water-chain-copy">
+              <span class="water-chain-stage-type">SOURCE</span>
+              <h4>Lek Canal intake</h4>
+              <p>Measured source conditions and early inlet-turbidity prediction.</p>
+              <div class="water-chain-sensors"><span>RWS</span><span>SoSe #9</span></div>
+            </div>
+          </article>
+
+          <div class="water-chain-connector" aria-hidden="true"><span>›</span></div>
+
+          <article class="water-chain-stage">
+            <img src="/static/ui/assets/sose8_fecl3_tank.png" alt="Coagulation and flocculation treatment" />
+            <div class="water-chain-number">02</div>
+            <div class="water-chain-copy">
+              <span class="water-chain-stage-type">TREATMENT</span>
+              <h4>Coagulation &amp; flocculation</h4>
+              <p>Outlet-turbidity prediction and operator-reviewed FeCl₃ dosing advice.</p>
+              <div class="water-chain-sensors"><span>SoSe #8</span><span class="rl">RL #5</span></div>
+            </div>
+          </article>
+
+          <div class="water-chain-connector" aria-hidden="true"><span>›</span></div>
+
+          <article class="water-chain-stage">
+            <img src="/static/ui/assets/ozonation_o3_chamber.png" alt="Ozone contact chambers" />
+            <div class="water-chain-number">03</div>
+            <div class="water-chain-copy">
+              <span class="water-chain-stage-type">TREATMENT</span>
+              <h4>Ozonation</h4>
+              <p>CT exposure, bromate formation, and microbial-removal decision support.</p>
+              <div class="water-chain-sensors"><span>SoSe #10</span><span>#10.1</span><span>#10.2</span></div>
+            </div>
+          </article>
+
+          <div class="water-chain-connector" aria-hidden="true"><span>›</span></div>
+
+          <article class="water-chain-stage">
+            <img src="/static/ui/assets/risk_distribution_network.png" alt="Drinking-water distribution network" />
+            <div class="water-chain-number">04</div>
+            <div class="water-chain-copy">
+              <span class="water-chain-stage-type">DISTRIBUTION</span>
+              <h4>Network &amp; delivery</h4>
+              <p>Biological-stability monitoring through to safe drinking water.</p>
+              <div class="water-chain-sensors"><span>SoSe #11</span><span>Operator oversight</span></div>
+            </div>
+          </article>
         </div>
 
-        <div class="home-module-card" data-nav="screen-distribution">
-          <div class="home-module-stripe" style="background:#0d3558;"></div>
-          <div class="home-module-name">&#128205; Distribution</div>
-          <div class="home-module-desc">Biological instability prediction and Aeromonas risk monitoring across the distribution network.</div>
-          <div class="home-module-tag">
-            <span class="home-module-pill">SoSe #11</span>
-            <span class="home-module-pill">Aeromonas</span>
-          </div>
+        <div class="water-chain-risk">
+          <span class="water-chain-risk-icon">!</span>
+          <div><strong>Risk interpretation across the complete chain</strong><small>Sensor-specific evidence is translated into advisory operator priorities—never automatic control.</small></div>
+          <div class="water-chain-risk-path">SOURCE <span>→</span> TREATMENT <span>→</span> DISTRIBUTION <span>→</span> SAFE WATER</div>
         </div>
-
-        <div class="home-module-card" data-nav="screen-risk">
-          <div class="home-module-stripe" style="background:#0d1f3c;"></div>
-          <div class="home-module-name">&#9888; Risk</div>
-          <div class="home-module-desc">Source-to-tap risk translation with severity&ndash;likelihood matrices, intervention pathways, and operator priorities.</div>
-          <div class="home-module-tag">
-            <span class="home-module-pill">Overview</span>
-            <span class="home-module-pill">Intervention pathways</span>
-            <span class="home-module-pill">S-to-T risk</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Source-to-tap flow -->
-      <div class="home-flow">
-        <div class="home-flow-step">&#128167; Raw Water</div>
-        <div class="home-flow-arrow">&#8594;</div>
-        <div class="home-flow-step">Source <span class="sensor-chip">SoSe #9</span></div>
-        <div class="home-flow-arrow">&#8594;</div>
-        <div class="home-flow-step">Coagulation <span class="sensor-chip">SoSe #8</span><span class="sensor-chip sensor-chip--rl">RL #5</span></div>
-        <div class="home-flow-arrow">&#8594;</div>
-        <div class="home-flow-step">Ozonation <span class="sensor-chip">SoSe #10/10.1/10.2</span></div>
-        <div class="home-flow-arrow">&#8594;</div>
-        <div class="home-flow-step">Distribution <span class="sensor-chip">SoSe #11</span></div>
-        <div class="home-flow-arrow">&#8594;</div>
-        <div class="home-flow-step">&#9888; Risk Assessment</div>
-        <div class="home-flow-arrow">&#8594;</div>
-        <div class="home-flow-step">&#128100; Safe Water</div>
-      </div>
+      </section>
 
       <!-- Partner links -->
       <div class="home-links">
@@ -272,7 +285,7 @@
           <div class="card-tag">LIVE HARD SENSOR</div>
           <div class="card-title">Nieuwegein, lekkanaal</div>
           <div class="card-desc">
-            Water temperature, water level, discharge, and chloride concentration from the RWS station.
+            Water temperature, water level, and discharge from the RWS station.
           </div>
         </div>
 
@@ -344,7 +357,6 @@
         <div class="metric" id="nieuwegein_lekkanaal-water_temperature-latest">Loading...</div>
         <div class="metric" id="nieuwegein_lekkanaal-water_level-latest">Loading...</div>
         <div class="metric" id="nieuwegein_lekkanaal-discharge-latest">Loading...</div>
-        <div class="metric" id="nieuwegein_lekkanaal-chloride-latest">Loading...</div>
       </div>
 
       <div class="two-col top-gap">
@@ -367,13 +379,6 @@
         <h4>Discharge</h4>
         <div class="chart-wrap">
           <canvas id="chart-nieuwegein_lekkanaal-discharge"></canvas>
-        </div>
-      </article>
-
-      <article class="panel top-gap">
-        <h4>Chloride concentration</h4>
-        <div class="chart-wrap">
-          <canvas id="chart-nieuwegein_lekkanaal-chloride"></canvas>
         </div>
       </article>
     </section>
@@ -719,17 +724,34 @@
           </div>
 
           <div class="rl-decision-grid">
-            <div class="rl-decision-card current"><span>Current dose</span><strong id="rl5-current-dose-display">5.00</strong><small>mg/L FeCl₃</small></div>
-            <div class="rl-decision-arrow">→</div>
-            <div class="rl-decision-card recommended"><span>Recommended dose</span><strong id="rl5-recommended-dose-display">–</strong><small>mg/L FeCl₃</small></div>
-            <div class="rl-decision-card"><span>Expected outlet turbidity</span><strong id="rl5-output-turbidity-display">–</strong><small>NTU / model output</small></div>
+            <div class="rl-decision-card current"><span>1. Current FeCl₃ dose</span><strong id="rl5-current-dose-display">5.00</strong><small id="rl5-current-dose-unit">mg/L</small></div>
+            <div class="rl-decision-card recommended"><span>2. Recommended FeCl₃ dose</span><strong id="rl5-recommended-dose-display">–</strong><small id="rl5-recommended-dose-unit">mg/L</small></div>
+            <div class="rl-decision-card"><span>3. Predicted turbidity — current dose</span><strong id="rl5-current-turbidity-display">–</strong><small>FTU / model output</small></div>
+            <div class="rl-decision-card"><span>4. Predicted turbidity — recommended dose</span><strong id="rl5-recommended-turbidity-display">–</strong><small>FTU / model output</small></div>
           </div>
           <div class="rl-advisory-summary">
-            <span>Recommended dosing flow: <strong id="rl5-dosing-flow-display">–</strong></span>
-            <span>Status: <strong id="rl5-validation-status-display">Under validation</strong></span>
+            <span>KWR comparison: <strong>current dose versus recommended dose</strong></span>
+            <span>Data quality: <strong id="rl5-data-quality-display">Awaiting input</strong></span>
+          </div>
+          <div class="info-box">
+            <strong>Operational optimisation target:</strong> approximately 4 FTU<br />
+            <strong>Acceptable operational threshold:</strong> below 6 FTU
+          </div>
+          <div class="warning-box">
+            <strong>Advisory recommendation — the operator remains responsible for the final dosing decision.</strong>
+            Accepting records a decision only; it never sends a dosing command.
           </div>
 
           <div id="rl5-latest">Press “Load latest backend output” or “Run RL recommendation from mock PIMS”.</div>
+
+          <div class="button-stack top-gap">
+            <button type="button" class="primary-btn" id="btn-rl5-accept" disabled>Accept recommendation</button>
+            <button type="button" class="secondary-btn" id="btn-rl5-reject" disabled>Reject recommendation</button>
+            <span class="badge info" id="rl5-decision-status">Decision: pending</span>
+          </div>
+          <div class="info-box top-gap" id="rl5-model-lifecycle">
+            Model lifecycle information will appear after a recommendation.
+          </div>
 
           <div class="info-box">
             Flow:
@@ -783,11 +805,6 @@
               <input id="rl5_year" name="year" type="number" step="1" value="2026" />
             </div>
 
-            <div class="form-row">
-              <label for="rl5_flow_coagulation">Flow coagulation for selected lane</label>
-              <input id="rl5_flow_coagulation" name="flow_coagulation" type="number" step="0.01" value="1000" />
-            </div>
-
             <input id="rl5_confidence" name="confidence" type="hidden" value="1.0" />
 
             <div class="button-stack">
@@ -798,6 +815,25 @@
           <div class="note top-gap">The recommendation is advisory only. The operator remains responsible for reviewing and applying any dose change.</div>
         </article>
       </div>
+      <article class="panel top-gap">
+        <div class="panel-head">
+          <h4>RL recommendation history</h4>
+          <div class="button-stack">
+            <button type="button" class="secondary-btn" id="btn-rl5-history">Refresh history</button>
+            <a class="secondary-btn" href="/treatment/coagulation/rl/history.csv" download>Download CSV</a>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Date/time</th><th>Current dose</th><th>Recommended dose</th>
+              <th>Turbidity: current</th><th>Turbidity: recommended</th>
+              <th>Decision</th><th>Model version</th><th>Data quality</th>
+            </tr></thead>
+            <tbody id="rl5-history-body"><tr><td colspan="8">No recommendations loaded.</td></tr></tbody>
+          </table>
+        </div>
+      </article>
     </section>
 
     <!-- OZONATION SELECT -->
@@ -1722,3 +1758,10 @@
 
 </body>
 </html>
+      <div class="info-box">
+        Numerical digital-failure probabilities are illustrative expert-informed scenario estimates;
+        not measured Waternet failure frequencies. The selected top event is prioritised using FMECA
+        ranking, severity, safety relevance, and detectability—not a claim that it has the highest
+        measured Waternet probability. Risk thresholds remain sensor-specific; the three-hour
+        predicted-exceedance persistence rule applies only to SoSe #9.
+      </div>

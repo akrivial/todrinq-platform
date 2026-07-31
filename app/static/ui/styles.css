@@ -2847,3 +2847,86 @@ body{
 @media (max-width: 620px) {
   .validation-strip { grid-template-columns: 1fr 1fr; }
 }
+
+/* Final home navigation and non-clickable Waternet process-chain treatment */
+.architecture-row{grid-template-columns:1.18fr repeat(4,1fr);}
+.module-tile--home{background:linear-gradient(135deg,#092a4a,#0c4167);}
+
+.water-chain{
+  position:relative;overflow:hidden;margin:0 0 20px;padding:28px;
+  border:1px solid #cfe4ee;border-radius:24px;
+  background:radial-gradient(circle at 92% 8%,rgba(0,180,200,.16),transparent 25%),linear-gradient(145deg,#fafdff 0%,#edf8fb 100%);
+  box-shadow:var(--shadow);
+}
+.water-chain::after{
+  content:"";position:absolute;left:-8%;right:-8%;bottom:-54px;height:105px;
+  border-radius:50%;background:rgba(0,171,199,.08);pointer-events:none;
+}
+.water-chain-head{
+  position:relative;z-index:1;display:flex;justify-content:space-between;
+  align-items:flex-end;gap:24px;margin-bottom:22px;
+}
+.water-chain-kicker{display:block;color:#008da4;font-size:.68rem;font-weight:900;letter-spacing:.14em;}
+.water-chain-head h3{margin:5px 0 4px;color:#092c4c;font-size:1.55rem;letter-spacing:-.025em;}
+.water-chain-head p{margin:0;color:#52708a;font-size:.86rem;}
+.water-chain-legend{display:flex;align-items:center;gap:8px;color:#52708a;font-size:.72rem;font-weight:700;white-space:nowrap;}
+.water-chain-legend span{width:30px;height:4px;border-radius:99px;background:linear-gradient(90deg,#086ca1,#00b8c8);}
+.water-chain-track{
+  position:relative;z-index:1;display:grid;
+  grid-template-columns:minmax(0,1fr) 26px minmax(0,1fr) 26px minmax(0,1fr) 26px minmax(0,1fr);
+  align-items:stretch;
+}
+.water-chain-stage{
+  position:relative;min-width:0;overflow:hidden;border-radius:18px;background:#fff;
+  border:1px solid #d1e4ed;box-shadow:0 10px 26px rgba(7,55,91,.1);
+}
+.water-chain-stage img{display:block;width:100%;height:128px;object-fit:cover;}
+.water-chain-stage::after{
+  content:"";position:absolute;top:92px;left:0;right:0;height:38px;background:linear-gradient(transparent,#fff);
+}
+.water-chain-number{
+  position:absolute;z-index:2;top:12px;left:12px;display:grid;place-items:center;
+  width:32px;height:32px;border-radius:50%;background:rgba(5,42,75,.9);color:#fff;
+  font-size:.68rem;font-weight:900;letter-spacing:.05em;border:2px solid rgba(255,255,255,.8);
+}
+.water-chain-copy{position:relative;z-index:2;padding:14px 15px 16px;}
+.water-chain-stage-type{color:#0294aa;font-size:.6rem;font-weight:900;letter-spacing:.12em;}
+.water-chain-copy h4{margin:3px 0 6px;color:#0b3152;font-size:1rem;}
+.water-chain-copy p{margin:0;color:#577189;font-size:.72rem;line-height:1.45;min-height:42px;}
+.water-chain-sensors{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;}
+.water-chain-sensors span{
+  padding:3px 7px;border-radius:999px;background:#e9f4fa;color:#0b5279;font-size:.58rem;font-weight:800;
+}
+.water-chain-sensors span.rl{background:#f0eafe;color:#6542a5;}
+.water-chain-connector{position:relative;display:grid;place-items:center;color:#00a9bf;}
+.water-chain-connector::before{content:"";position:absolute;width:25px;height:4px;background:#85d9e4;}
+.water-chain-connector span{position:relative;z-index:1;background:#edf8fb;font-size:1.8rem;line-height:1;}
+.water-chain-risk{
+  position:relative;z-index:1;display:grid;grid-template-columns:auto minmax(220px,1fr) auto;
+  align-items:center;gap:13px;margin-top:18px;padding:13px 16px;border-radius:14px;
+  background:linear-gradient(105deg,#0a3152,#086f96);color:#fff;
+}
+.water-chain-risk-icon{
+  display:grid;place-items:center;width:32px;height:32px;border-radius:50%;
+  color:#092d4d;background:#7ee3e8;font-weight:900;
+}
+.water-chain-risk strong,.water-chain-risk small{display:block;}
+.water-chain-risk strong{font-size:.82rem;}
+.water-chain-risk small{margin-top:2px;color:#cde9f2;font-size:.65rem;}
+.water-chain-risk-path{font-size:.62rem;font-weight:900;letter-spacing:.05em;white-space:nowrap;}
+.water-chain-risk-path span{color:#79e0e6;padding:0 4px;}
+
+@media (max-width:1100px){
+  .architecture-row{grid-template-columns:repeat(3,1fr);}
+  .water-chain-track{display:flex;flex-direction:column;}
+  .water-chain-connector{height:28px;transform:rotate(90deg);}
+  .water-chain-stage img{height:180px;}
+}
+@media (max-width:720px){
+  .architecture-row{grid-template-columns:1fr;}
+  .water-chain{padding:20px;}
+  .water-chain-head{align-items:flex-start;flex-direction:column;}
+  .water-chain-stage img{height:150px;}
+  .water-chain-risk{grid-template-columns:auto 1fr;}
+  .water-chain-risk-path{grid-column:1/-1;white-space:normal;}
+}

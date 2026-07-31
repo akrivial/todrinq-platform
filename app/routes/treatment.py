@@ -20,8 +20,13 @@ from app.services.ozonation_predictions import (
 )
 from app.services.ct_reference import calculate_ct_reference
 from app.services.observation_store import record_observation
+from app.services.model_lifecycle import model_lifecycle
 
 router = APIRouter(tags=["Treatment Module"])
+
+
+def _lifecycle(family: str, name: str, version: str) -> dict:
+    return model_lifecycle(family=family, name=name, version=version)
 
 
 # --------------------------------------------------
@@ -231,24 +236,9 @@ def coagulation_latest():
         "display_name": SOSE_8["display_name"],
         "input": data,
         "prediction": pred,
-    }
-
-
-# --------------------------------------------------
-# RL
-# --------------------------------------------------
-@router.get("/coagulation/rl/latest", summary="Treatment RL #5 latest")
-def rl_latest():
-    return {
-        "display_name": RL_5["display_name"],
-        "status": "under validation",
-        "recommended_dose": None,
-        "unit": "mg/L",
-        "included_in_risk_aggregation": False,
-        "message": "Use POST /treatment/coagulation/rl with current process input. No fabricated latest RL recommendation is returned.",
-        "validation_todos": [
-            "TODO(Greg): verify ACTION_MAP, unit conversion, and model-output interpretation before final release.",
-        ],
+        "model_lifecycle": _lifecycle(
+            "coagulation_performance", "Coagulation-performance model", "SoSe-8"
+        ),
     }
 
 
@@ -280,6 +270,7 @@ def ct_latest():
         "ct_reference": ct_reference,
         "validation_warning": "Compared with the strictest temperature-dependent CT requirement calculated from the supervisor-provided tables and targets (1.5-log Giardia, 1.8-log virus, 2.1-log E. coli). This is a project operational reference, not a universal or EU legal limit.",
         "persistence": storage,
+        "model_lifecycle": _lifecycle("ct", "CT model", "SoSe-10"),
     }
 
 
@@ -306,6 +297,7 @@ def ct(payload: CTInput):
         "ct_reference": ct_reference,
         "validation_warning": "Compared with the strictest temperature-dependent CT requirement calculated from the supervisor-provided tables and targets (1.5-log Giardia, 1.8-log virus, 2.1-log E. coli). This is a project operational reference, not a universal or EU legal limit.",
         "persistence": storage,
+        "model_lifecycle": _lifecycle("ct", "CT model", "SoSe-10"),
     }
 
 
@@ -395,6 +387,7 @@ def bromate_latest():
         "timestamp": data["timestamp"],
         "resolution": "1h",
         "persistence": storage,
+        "model_lifecycle": _lifecycle("bromate", "Bromate model", "SoSe-10.1"),
     }
 
 
@@ -414,6 +407,7 @@ def bromate(payload: BromateInput):
         "unit": "ug/L",
         "timestamp": timestamp,
         "persistence": storage,
+        "model_lifecycle": _lifecycle("bromate", "Bromate model", "SoSe-10.1"),
     }
 
 
@@ -450,6 +444,9 @@ def coliform_latest():
         "timestamp": data["timestamp"],
         "resolution": "1h",
         "persistence": storage,
+        "model_lifecycle": _lifecycle(
+            "coliform_removal", "Coliform-removal model", "SoSe-10.2-holm"
+        ),
     }
 
 
@@ -473,6 +470,9 @@ def coliform(payload: ColiformInput):
         "unit": "log10 reduction",
         "timestamp": timestamp,
         "persistence": storage,
+        "model_lifecycle": _lifecycle(
+            "coliform_removal", "Coliform-removal model", "SoSe-10.2-holm"
+        ),
     }
 
 

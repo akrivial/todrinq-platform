@@ -16,6 +16,7 @@ const ENDPOINTS = {
   treatmentOverview: "/treatment/overview",
   treatmentCoagLatest: "/treatment/coagulation/latest",
   treatmentRLLatest: "/treatment/coagulation/rl/recommendation/latest",
+  treatmentRLHistory: "/treatment/coagulation/rl/history?limit=200",
   treatmentCT: "/treatment/ozonation/ct",
   treatmentBromate: "/treatment/ozonation/bromate",
   treatmentColiform: "/treatment/ozonation/coliform",
@@ -92,7 +93,8 @@ const state = {
   },
   rl5: {
     lastInput: null,
-    lastRisk: null
+    lastRisk: null,
+    currentRecommendationId: null
   },
   ozonation: {
     ctInput: null,
@@ -257,12 +259,117 @@ function renderRL5Advisory(id, data) {
   const el = document.getElementById(id);
   if (!el) return;
   const advisory = data?.operator_advisory || {};
+  const quality = data?.data_quality || {};
+  if (data?.recommendation_available === false) {
+    el.innerHTML = `<div class="warning-box">
+      <strong>Recommendation unavailable · ${escapeHtml(quality.status || "unavailable")}</strong><br>
+      ${escapeHtml(quality.reason || data?.message || "Required operational input is not valid.")}
+    </div>`;
+    return;
+  }
   const status = advisory.confidence_status || data?.validation_status || "under validation";
   el.innerHTML = `
     <div class="rl-validation-note">
       <strong>Advisory only · ${escapeHtml(status)}</strong>
-      <span>Generated ${escapeHtml(data?.timestamp || "on the latest model run")}. Operator review is required before changing the dose.</span>
+      <span>Generated ${escapeHtml(data?.timestamp || "on the latest model run")}. Advisory recommendation — the operator remains responsible for the final dosing decision.</span>
     </div>`;
+}
+
+function applyRL5Result(data) {
+  renderRL5Advisory("rl5-latest", data);
+  const currentDose = extractNumber(data.current_fecl3_dose?.value ?? data.input_data?.fecl3_concentration);
+  const recommendedDose = extractNumber(data.recommended_fecl3_concentration?.value);
+  const currentTurbidity = extractNumber(
+    data.predicted_turbidity_current_dose?.value ??
+    data.predicted_outlet_turbidity?.value
+  );
+  const recommendedTurbidity = extractNumber(
+    data.predicted_turbidity_recommended_dose?.value ??
+    data.operator_advisory?.predicted_effluent_turbidity
+  );
+  const doseUnit = data.recommended_fecl3_concentration?.unit || data.current_fecl3_dose?.unit || "model dose unit";
+  const recommendationAvailable = data.recommendation_available !== false && recommendedDose !== null;
+  const qualityStatus = data.data_quality?.status || (recommendationAvailable ? "valid" : "unavailable");
+
+  setText("rl5-current-dose-display", currentDose, 2);
+  setText("rl5-recommended-dose-display", recommendedDose, 2);
+  setText("rl5-current-turbidity-display", currentTurbidity, 3);
+  setText("rl5-recommended-turbidity-display", recommendedTurbidity, 3);
+  setText("rl5-current-dose-unit", doseUnit, 0);
+  setText("rl5-recommended-dose-unit", doseUnit, 0);
+  setText("rl5-data-quality-display", qualityStatus, 0);
+
+  state.rl5.currentRecommendationId = data.persistence?.id ?? null;
+  const available = recommendationAvailable && state.rl5.currentRecommendationId !== null;
+  const accept = document.getElementById("btn-rl5-accept");
+  const reject = document.getElementById("btn-rl5-reject");
+  if (accept) accept.disabled = !available;
+  if (reject) reject.disabled = !available;
+  setBadge("rl5-decision-status", "Decision: pending", "info");
+
+  const lifecycle = data.model_lifecycle || {};
+  const lifecycleEl = document.getElementById("rl5-model-lifecycle");
+  if (lifecycleEl) lifecycleEl.innerHTML = `
+    <strong>${escapeHtml(lifecycle.model_name || "RL #5")}</strong><br>
+    Version: ${escapeHtml(lifecycle.model_version || "pending")} ·
+    Training date: ${escapeHtml(lifecycle.training_date || "pending confirmation")} ·
+    Last review: ${escapeHtml(lifecycle.last_review_date || "pending confirmation")} ·
+    Review interval: ${escapeHtml(lifecycle.review_threshold_months || 6)} months<br>
+    ${escapeHtml(lifecycle.review_warning || lifecycle.review_status || "")}
+  `;
+
+  return { currentDose, recommendedDose, recommendedTurbidity };
+}
+
+async function refreshRL5RiskSafely(riskPayload) {
+  try {
+    await runAutomaticRL5Risk(riskPayload);
+  } catch (error) {
+    console.warn(
+      "RL recommendation succeeded, but the separate risk-panel refresh was unavailable.",
+      error
+    );
+  }
+}
+
+async function loadRL5History() {
+  const body = document.getElementById("rl5-history-body");
+  if (!body) return;
+  const data = await getJSON(ENDPOINTS.treatmentRLHistory);
+  const items = [...(data.items || [])].reverse();
+  body.innerHTML = items.length ? items.map(item => `<tr>
+    <td>${escapeHtml(item.recommendation_timestamp || "–")}</td>
+    <td>${escapeHtml(item.current_actual_dose ?? "–")} ${escapeHtml(item.dose_unit || "")}</td>
+    <td>${escapeHtml(item.recommended_dose ?? "–")} ${escapeHtml(item.dose_unit || "")}</td>
+    <td>${escapeHtml(item.predicted_turbidity_current_dose ?? "–")}</td>
+    <td>${escapeHtml(item.predicted_turbidity_recommended_dose ?? "–")}</td>
+    <td>${escapeHtml(item.operator_decision || "pending")}</td>
+    <td>${escapeHtml(item.model_version || "pending")}</td>
+    <td>${escapeHtml(item.data_quality_status || "unavailable")}</td>
+  </tr>`).join("") : `<tr><td colspan="8">No recommendations stored.</td></tr>`;
+}
+
+async function loadRL5HistorySafely() {
+  try {
+    await loadRL5History();
+  } catch (error) {
+    console.warn(
+      "The RL recommendation is available, but recommendation history could not be refreshed.",
+      error
+    );
+  }
+}
+
+async function recordRL5Decision(decision) {
+  if (state.rl5.currentRecommendationId == null) return;
+  const result = await postJSON(
+    `/treatment/coagulation/rl/recommendations/${encodeURIComponent(state.rl5.currentRecommendationId)}/decision`,
+    { decision }
+  );
+  setBadge("rl5-decision-status", `Decision: ${result.operator_decision}`, "info");
+  document.getElementById("btn-rl5-accept").disabled = true;
+  document.getElementById("btn-rl5-reject").disabled = true;
+  await loadRL5HistorySafely();
 }
 
 function renderBactoSenseStatus(id, data) {
@@ -2500,7 +2607,7 @@ function drawSoSe9ComparisonChart() {
   ];
   charts.sose9.data.datasets[2].data = [
     null, null, null, null, null, null,
-    sose9ForecastHistory.at(-1)?.actual ?? null,
+    sose9ForecastHistory.at(-1)?.predicted ?? null,
     null,
     null,
     sose9LatestFuturePrediction,
@@ -2775,12 +2882,9 @@ document.getElementById("btn-treatment-coag-latest")?.addEventListener("click", 
 document.getElementById("btn-rl5-latest")?.addEventListener("click", async () => {
   try {
     const data = await getJSON(ENDPOINTS.treatmentRLLatest);
-    renderRL5Advisory("rl5-latest", data);
+    const summary = applyRL5Result(data);
 
     const currentDose = extractNumber(data.input_data?.fecl3_concentration);
-    const recommendedDose = extractNumber(data.recommended_fecl3_concentration?.value);
-    const outputTurbidity = extractNumber(data.predicted_outlet_turbidity?.value);
-    const dosingFlow = extractNumber(data.recommended_fecl3_dosing_flow?.value);
 
     if (currentDose !== null) setValue("rl5_current_fecl3_dose", currentDose);
     const rlInput = data.input_data || {};
@@ -2791,20 +2895,15 @@ document.getElementById("btn-rl5-latest")?.addEventListener("click", async () =>
     setValue("rl5_lane", rlInput.lane);
     setValue("rl5_year", rlInput.year);
 
-    setText("rl5-current-dose-display", currentDose, 2);
-    setText("rl5-recommended-dose-display", recommendedDose, 2);
-    setText("rl5-output-turbidity-display", outputTurbidity, 3);
-    setText("rl5-dosing-flow-display", dosingFlow, 2);
-    setText("rl5-validation-status-display", "under validation", 0);
-
     const riskPayload = {
-      current_fecl3_dose: currentDose,
-      recommended_fecl3_dose: recommendedDose,
-      output_turbidity: outputTurbidity,
+      current_fecl3_dose: summary.currentDose,
+      recommended_fecl3_dose: summary.recommendedDose,
+      output_turbidity: summary.recommendedTurbidity,
       confidence: 0
     };
 
-    await runAutomaticRL5Risk(riskPayload);
+    if (data.recommendation_available !== false) await refreshRL5RiskSafely(riskPayload);
+    await loadRL5HistorySafely();
 
   } catch (err) {
     renderStatusCard("rl5-latest", "RL #5 advisory unavailable", { status: "error", message: err.message });
@@ -3056,31 +3155,16 @@ function stopCoagulationLiveMode() {
 
 async function updateRL5FromCoagulationInput(input) {
   try {
-    const lane = Number(input.lane || 1);
+    const data = await postJSON("/treatment/coagulation/rl", input);
+    const summary = applyRL5Result(data);
 
-    const payload = {
-      ...input,
-      [`flow_coagulation_${lane}`]: input[`flow_coagulation_${lane}`] ?? 1000
-    };
-
-    const data = await postJSON("/treatment/coagulation/rl", payload);
-    renderRL5Advisory("rl5-latest", data);
-
-    const currentDose = extractNumber(data.input_data?.fecl3_concentration);
-    const recommendedDose = extractNumber(data.recommended_fecl3_concentration?.value);
-    const outputTurbidity = extractNumber(data.predicted_outlet_turbidity?.value);
-    const dosingFlow = extractNumber(data.recommended_fecl3_dosing_flow?.value);
+    const currentDose = summary.currentDose;
+    const recommendedDose = summary.recommendedDose;
+    const outputTurbidity = summary.recommendedTurbidity;
 
     setValue("rl5_current_fecl3_dose", currentDose);
     setValue("rl5_recommended_fecl3_dose", recommendedDose);
     setValue("rl5_output_turbidity", outputTurbidity);
-    setValue("rl5_dosing_flow", dosingFlow);
-
-    setText("rl5-current-dose-display", currentDose, 2);
-    setText("rl5-recommended-dose-display", recommendedDose, 2);
-    setText("rl5-output-turbidity-display", outputTurbidity, 3);
-    setText("rl5-dosing-flow-display", dosingFlow, 2);
-    setText("rl5-validation-status-display", "under validation", 0);
 
     const riskPayload = {
       current_fecl3_dose: currentDose,
@@ -3089,7 +3173,8 @@ async function updateRL5FromCoagulationInput(input) {
       confidence: 0
     };
 
-    await runAutomaticRL5Risk(riskPayload);
+    if (data.recommendation_available !== false) await refreshRL5RiskSafely(riskPayload);
+    await loadRL5HistorySafely();
 
   } catch (err) {
     renderStatusCard("rl5-latest", "RL #5 advisory unavailable", { status: "error", message: err.message });
@@ -3150,6 +3235,21 @@ document.getElementById("form-rl5")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const payload = formDataToObject(e.target);
   await updateRL5FromCoagulationInput(payload);
+});
+
+document.getElementById("btn-rl5-accept")?.addEventListener("click", async () => {
+  try { await recordRL5Decision("accepted"); }
+  catch (error) { alert("Could not record the operator decision: " + error.message); }
+});
+
+document.getElementById("btn-rl5-reject")?.addEventListener("click", async () => {
+  try { await recordRL5Decision("rejected"); }
+  catch (error) { alert("Could not record the operator decision: " + error.message); }
+});
+
+document.getElementById("btn-rl5-history")?.addEventListener("click", async () => {
+  try { await loadRL5History(); }
+  catch (error) { alert("Could not load RL history: " + error.message); }
 });
 
 async function updateLiveCoagulationOnce() {
@@ -3630,8 +3730,7 @@ const rwsParametersByLocation = {
   nieuwegein_lekkanaal: [
     "water_temperature",
     "water_level",
-    "discharge",
-    "chloride"
+    "discharge"
   ],
 
   nieuwegein_doorslag: [
@@ -3643,8 +3742,7 @@ const rwsParametersByLocation = {
 const rwsParameterLabels = {
   water_temperature: "Water temperature",
   water_level: "Water level",
-  discharge: "Discharge",
-  chloride: "Chloride concentration"
+  discharge: "Discharge"
 };
 
 

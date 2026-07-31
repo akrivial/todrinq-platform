@@ -21,6 +21,13 @@ The platform provides four connected operational modules:
 
 The current demonstration uses Mock PIMS inputs through the same interfaces intended for future real-PIMS data. Model predictions are real outputs of the integrated trained models where those models are available; mock inputs and mock validation measurements are labelled in the UI.
 
+The PIMS connector was developed and technically tested by Waternet. Full
+commissioning of the complete platform in Waternet’s production environment
+remains future work. The platform is advisory decision support; final
+cybersecurity approval, operator training, maintenance ownership, data
+governance, and final variable mapping remain pending and must not be inferred
+from this demonstration.
+
 ### Prediction history and scheduling
 
 The backend scheduler produces and stores hourly predictions for:
@@ -35,11 +42,13 @@ Historical records are stored in **Amazon DynamoDB** in the deployed AWS environ
 
 ### Risk confirmation rule
 
-Scientific/operational thresholds are evaluated first. A low-threshold result is Low Risk and a moderate-threshold result is Moderate Risk. For high-threshold results, three distinct consecutive predictions are used to avoid triggering an action from one isolated value:
+Risk thresholds remain sensor-specific. The three-hour predicted-exceedance
+persistence rule described below applies only to SoSe #9; it is not a universal
+rule for every model.
 
-- 1 of 3: early warning, displayed as Moderate
-- 2 of 3: continued warning, displayed as Moderate
-- 3 of 3: confirmed High Risk and mitigation action
+- 1 of 3 hourly SoSe #9 exceedances: early warning, displayed as Moderate
+- 2 of 3 hourly SoSe #9 exceedances: continued warning, displayed as Moderate
+- 3 of 3 hourly SoSe #9 exceedances: confirmed High Risk and mitigation action
 
 Refreshing or repeating the same timestamp does not increase the count. A subsequent value outside the high threshold breaks the high-risk sequence.
 

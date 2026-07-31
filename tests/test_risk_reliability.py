@@ -11,7 +11,7 @@ def _response(risk_class: str) -> dict:
     return {"overall_risk": {"class": risk_class, "score": 5 if risk_class == "High" else 1}}
 
 
-def test_high_requires_three_distinct_consecutive_results():
+def test_non_sose9_high_does_not_invent_persistence_rule():
     RELIABILITY_HISTORY["bromate"].clear()
     base = datetime.now(timezone.utc)
     first = apply_runtime_reliability(
@@ -28,12 +28,12 @@ def test_high_requires_three_distinct_consecutive_results():
         prediction_timestamp=(base + timedelta(seconds=2)).isoformat(),
     )
 
-    assert first["overall_risk"]["class"] == "Moderate"
-    assert first["reliability"]["status"] == "awaiting_confirmation"
-    assert second["overall_risk"]["class"] == "Moderate"
-    assert second["reliability"]["display_count"] == "2/3"
+    assert first["overall_risk"]["class"] == "High"
+    assert first["reliability"]["status"] == "valid"
+    assert second["overall_risk"]["class"] == "High"
+    assert second["reliability"]["display_count"] == "1/1"
     assert third["overall_risk"]["class"] == "High"
-    assert third["reliability"]["display_count"] == "3/3"
+    assert third["reliability"]["display_count"] == "1/1"
 
 
 def test_same_timestamp_does_not_increment_confirmation_count():
@@ -48,7 +48,7 @@ def test_same_timestamp_does_not_increment_confirmation_count():
         _response("High"), sensor_key="bromate", value=12.2, raw_class="High",
         prediction_timestamp=timestamp,
     )
-    assert repeated["reliability"]["display_count"] == "1/3"
+    assert repeated["reliability"]["display_count"] == "1/1"
     assert len(RELIABILITY_HISTORY["bromate"]) == 1
 
 
@@ -64,7 +64,7 @@ def test_normal_result_breaks_high_persistence():
         _response("High"), sensor_key="bromate", value=12.0, raw_class="High"
     )
 
-    assert result["overall_risk"]["class"] == "Moderate"
+    assert result["overall_risk"]["class"] == "High"
     assert result["reliability"]["consecutive_high"] == 1
 
 
