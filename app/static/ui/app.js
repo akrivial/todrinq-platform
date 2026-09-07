@@ -676,54 +676,17 @@ function buildRichRiskHtml(data) {
 // ------------------------------
 // Coagulation-specific helpers
 // ------------------------------
-function getCoagulationOperationalThreshold(rawTurbidity) {
-  const raw = extractNumber(rawTurbidity);
-
-  if (raw === null) {
-    return {
-      threshold: null,
-      basis: "No raw-water turbidity available"
-    };
-  }
-
-  if (raw <= 10) {
-    return {
-      threshold: 1.0,
-      basis: "Operational target based on low raw-water turbidity conditions"
-    };
-  }
-
-  if (raw <= 20) {
-    return {
-      threshold: 2.0,
-      basis: "Operational target based on moderate raw-water turbidity conditions"
-    };
-  }
-
+function getCoagulationOperationalThreshold() {
   return {
-    threshold: 2.0,
-    basis: "Conservative operational review target for higher raw-water turbidity"
+    threshold: 6.0,
+    basis: "Approximate upper acceptable Waternet operating reference; not an optimisation target"
   };
 }
 
-function calculateRemovalEfficiency(rawTurbidity, predictedOutlet) {
-  const raw = extractNumber(rawTurbidity);
-  const pred = extractNumber(predictedOutlet);
-
-  if (raw === null || pred === null || raw <= 0) return null;
-
-  return ((raw - pred) / raw) * 100;
-}
-
-function updateCoagulationOperationalSummary(input, prediction) {
-  const raw = extractNumber(input?.ftu_raw_water);
-  const pred = extractNumber(prediction);
-
-  const targetInfo = getCoagulationOperationalThreshold(raw);
-  const efficiency = calculateRemovalEfficiency(raw, pred);
+function updateCoagulationOperationalSummary() {
+  const targetInfo = getCoagulationOperationalThreshold();
 
   setText("coagulation-threshold", targetInfo.threshold, 2);
-  setText("coagulation-efficiency", efficiency, 1);
 
   const thresholdBasis = document.getElementById("coagulation-threshold-basis");
   if (thresholdBasis) thresholdBasis.textContent = targetInfo.basis;
@@ -2798,7 +2761,7 @@ function ensureCoagulationChartDatasets() {
       pointRadius: 4
     },
     {
-      label: "Operational target",
+      label: "Acceptable operating reference (≈6 FTU)",
       data: [],
       tension: 0,
       fill: false,
