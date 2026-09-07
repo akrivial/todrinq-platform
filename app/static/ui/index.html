@@ -429,6 +429,23 @@
         </p>
       </div>
 
+      <section class="model-lifecycle-section" aria-labelledby="model-lifecycle-title">
+        <div class="model-lifecycle-heading">
+          <div>
+            <span class="model-lifecycle-kicker">MODEL GOVERNANCE</span>
+            <h4 id="model-lifecycle-title">Model lifecycle and artefact review</h4>
+          </div>
+          <span class="model-lifecycle-policy">6-month review · 12-month overdue threshold</span>
+        </div>
+        <div class="model-lifecycle-grid" id="model-lifecycle-grid">
+          <div class="model-lifecycle-loading">Loading model lifecycle metadata...</div>
+        </div>
+        <p class="model-lifecycle-note">
+          Age uses confirmed training/review metadata when available, otherwise the latest recorded GitHub artefact commit.
+          Lifecycle messages are advisory. Predictions remain available; retraining is manual, reviewed, and authorised.
+        </p>
+      </section>
+
       <div class="card-grid">
         <!-- Operator navigation begins with process-specific treatment cards. -->
         <div class="card" data-nav="screen-coagulation">
@@ -749,10 +766,6 @@
             <button type="button" class="secondary-btn" id="btn-rl5-reject" disabled>Reject recommendation</button>
             <span class="badge info" id="rl5-decision-status">Decision: pending</span>
           </div>
-          <div class="info-box top-gap" id="rl5-model-lifecycle">
-            Model lifecycle information will appear after a recommendation.
-          </div>
-
           <div class="info-box">
             Flow:
             <strong>Mock/PIMS input → KWR SoSe #8 environment → RL #5 recommendation → UI output</strong>.

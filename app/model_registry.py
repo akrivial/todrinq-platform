@@ -91,22 +91,13 @@ def load_ozonation_models() -> None:
     global bromate_model, bromate_feature_scaler, bromate_target_scaler
     global coliform_model, coliform_feature_scaler, coliform_target_scaler
 
-    # ----------------------------------------------------
-    # CT model (TEMPORARILY DISABLED)
-    # ----------------------------------------------------
-    # NOTE:
-    # The CT model depends on a missing training dependency (_loss).
-    # Re-enable only after a clean export or after adding the missing module.
-    #
-    # ct_model = _load_joblib(CT_DIR / "GB_test_5_v2_42.pkl", "CT model")
-    # ct_feature_scaler = _load_joblib(
-    #     CT_DIR / "feature_scaler.pkl",
-    #     "CT feature scaler",
-    # )
-    # ct_target_scaler = _load_joblib(
-    #     CT_DIR / "target_scaler.pkl",
-    #     "CT target scaler",
-    # )
+    # Use the same CT objects as the deployed treatment and risk routes.
+    from app.services.ozonation_predictions import MODELS as deployed_ozonation_models
+
+    deployed_ct = deployed_ozonation_models["CT"]
+    ct_model = deployed_ct["model"]
+    ct_feature_scaler = deployed_ct["f_scaler"]
+    ct_target_scaler = deployed_ct["t_scaler"]
 
     bromate_model = _load_joblib(
         BROMATE_DIR / "adaboost_bromate_12_42.pkl",
@@ -186,7 +177,11 @@ _load_sose9()
 
 def status() -> Dict[str, bool]:
     return {
-        "ct": False,  # intentionally disabled for now
+        "ct": (
+            ct_model is not None
+            and ct_feature_scaler is not None
+            and ct_target_scaler is not None
+        ),
         "bromate": (
             bromate_model is not None
             and bromate_feature_scaler is not None
@@ -204,7 +199,8 @@ def status() -> Dict[str, bool]:
 def ready() -> bool:
     s = status()
     return (
-        s["bromate"]
+        s["ct"]
+        and s["bromate"]
         and s["coliform_removal"]
         and s["coagulation"]
     )

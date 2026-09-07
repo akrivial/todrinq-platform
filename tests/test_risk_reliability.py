@@ -78,9 +78,12 @@ def test_maintenance_is_unavailable_and_excluded():
         reset_history=True,
     )
 
-    assert result["overall_risk"]["class"] == "Unavailable"
+    assert result["overall_risk"]["class"] == "Unknown"
+    assert result["risk_state"] == "Unknown"
     assert result["included_in_risk_aggregation"] is False
-    assert aggregate_active_components([result]) == {"class": "Unavailable", "score": 0}
+    assert aggregate_active_components([result]) == {
+        "class": "Unknown", "score": 0, "risk_state": "Unknown"
+    }
 
 
 def test_stale_result_is_excluded():
@@ -95,7 +98,11 @@ def test_stale_result_is_excluded():
     )
 
     assert result["reliability"]["status"] == "stale"
+    assert result["risk_state"] == "Unknown"
     assert result["included_in_risk_aggregation"] is False
+    assert aggregate_active_components([result, _response("Moderate")]) == {
+        "class": "Moderate", "score": 3, "risk_state": "Moderate"
+    }
 
 
 def test_out_of_range_result_is_excluded():
@@ -108,4 +115,5 @@ def test_out_of_range_result_is_excluded():
     )
 
     assert result["reliability"]["status"] == "invalid"
+    assert result["risk_state"] == "Unknown"
     assert result["included_in_risk_aggregation"] is False

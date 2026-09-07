@@ -307,17 +307,6 @@ function applyRL5Result(data) {
   if (reject) reject.disabled = !available;
   setBadge("rl5-decision-status", "Decision: pending", "info");
 
-  const lifecycle = data.model_lifecycle || {};
-  const lifecycleEl = document.getElementById("rl5-model-lifecycle");
-  if (lifecycleEl) lifecycleEl.innerHTML = `
-    <strong>${escapeHtml(lifecycle.model_name || "RL #5")}</strong><br>
-    Version: ${escapeHtml(lifecycle.model_version || "pending")} ·
-    Training date: ${escapeHtml(lifecycle.training_date || "pending confirmation")} ·
-    Last review: ${escapeHtml(lifecycle.last_review_date || "pending confirmation")} ·
-    Review interval: ${escapeHtml(lifecycle.review_threshold_months || 6)} months<br>
-    ${escapeHtml(lifecycle.review_warning || lifecycle.review_status || "")}
-  `;
-
   return { currentDose, recommendedDose, recommendedTurbidity };
 }
 
@@ -2672,7 +2661,111 @@ const charts = {
   bactosenseUv: makeOzonationHistoryChart("chart-bactosense-uv", "Influent/effluent UV (awaiting data)", "rgb(243,156,18)"),
   bactosenseCells: makeOzonationHistoryChart("chart-bactosense-cells", "BactoSense intact cell number (awaiting data)", "rgb(39,174,96)")
 };
+
+function lifecycleDate(value) {
+  if (!value) return "Pending confirmation";
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString(undefined, {
+    year: "numeric", month: "short", day: "numeric"
+  });
+}
+
+function renderModelLifecycleOverview(payload) {
+  const grid = document.getElementById("model-lifecycle-grid");
+  if (!grid) return;
+  const models = payload?.model_lifecycle?.models || [];
+  grid.innerHTML = models.map((model) => {
+    const level = ["current", "review", "overdue", "pending"].includes(model.lifecycle_level)
+      ? model.lifecycle_level : "pending";
+    const referenceDate = model.age_reference_date;
+    const referenceLabel = model.age_reference_type || "Reference date";
+    const approximate = model.artefact_commit_precision === "approximate" ? " (approx.)" : "";
+    const age = model.model_age_days !== null && model.model_age_days !== undefined && Number.isFinite(Number(model.model_age_days))
+      ? `${Math.max(0, Math.floor(Number(model.model_age_days)))} days` : "Not available";
+    return `
+      <article class="model-lifecycle-card lifecycle-${level}">
+        <div class="model-lifecycle-card-head">
+          <strong>${escapeHtml(model.model_name || "Model")}</strong>
+          <span class="model-lifecycle-state">${escapeHtml(model.review_status || "Metadata pending")}</span>
+        </div>
+        <dl>
+          <div><dt>Version</dt><dd>${escapeHtml(model.model_version || "Pending")}</dd></div>
+          <div><dt>${escapeHtml(referenceLabel)}</dt><dd>${escapeHtml(lifecycleDate(referenceDate))}${escapeHtml(approximate)}</dd></div>
+          <div><dt>Reference age</dt><dd>${escapeHtml(age)}</dd></div>
+          <div><dt>Training date</dt><dd>${escapeHtml(model.training_date ? lifecycleDate(model.training_date) : "Pending confirmation")}</dd></div>
+        </dl>
+        <p>${escapeHtml(model.review_warning || "")}</p>
+      </article>`;
+  }).join("") || '<div class="model-lifecycle-loading">No model lifecycle metadata available.</div>';
+}
+
+function lifecycleBannerMarkup(model) {
+  const level = ["current", "review", "overdue", "pending"].includes(model?.lifecycle_level)
+    ? model.lifecycle_level : "pending";
+  const referenceDate = model?.age_reference_date;
+  const referenceLabel = model?.age_reference_type || "Reference date";
+  const approximate = model?.artefact_commit_precision === "approximate" ? " (approx.)" : "";
+  const age = model?.model_age_days !== null && model?.model_age_days !== undefined
+    ? `${Math.max(0, Math.floor(Number(model.model_age_days)))} days` : "Not available";
+  return `
+    <div class="model-lifecycle-banner lifecycle-${level}" role="status">
+      <div class="model-lifecycle-banner-status">
+        <span class="model-lifecycle-dot" aria-hidden="true"></span>
+        <div>
+          <strong>${escapeHtml(model?.review_status || "Model metadata pending")}</strong>
+          <span>${escapeHtml(model?.model_name || "Soft-sensor model")} · ${escapeHtml(model?.model_version || "Version pending")}</span>
+        </div>
+      </div>
+      <div class="model-lifecycle-banner-meta">
+        <span>${escapeHtml(referenceLabel)}: <strong>${escapeHtml(lifecycleDate(referenceDate))}${escapeHtml(approximate)}</strong></span>
+        <span>Reference age: <strong>${escapeHtml(age)}</strong></span>
+      </div>
+      <p>${escapeHtml(model?.review_warning || "")}</p>
+      <small>Training date: ${escapeHtml(model?.training_date ? lifecycleDate(model.training_date) : "pending confirmation")} · Advisory only · Prediction remains available · Retraining requires review and authorisation</small>
+    </div>`;
+}
+
+function renderLifecycleBanners(models) {
+  const screenModels = {
+    "screen-source": "SoSe-9",
+    "screen-coagulation": "SoSe-8",
+    "screen-rl5": "RL-5",
+    "screen-ct": "SoSe-10",
+    "screen-bromate": "SoSe-10.1",
+    "screen-coliform": "SoSe-10.2-holm"
+  };
+  Object.entries(screenModels).forEach(([screenId, version]) => {
+    const screen = document.getElementById(screenId);
+    const heading = screen?.querySelector(".section-head");
+    const model = models.find((item) => item.model_version === version);
+    if (!screen || !heading || !model) return;
+    let host = screen.querySelector(".model-lifecycle-banner-host");
+    if (!host) {
+      host = document.createElement("div");
+      host.className = "model-lifecycle-banner-host";
+      heading.insertAdjacentElement("afterend", host);
+    }
+    host.innerHTML = lifecycleBannerMarkup(model);
+  });
+}
+
+async function loadModelLifecycleOverview() {
+  try {
+    const payload = await getJSON(ENDPOINTS.treatmentOverview);
+    renderModelLifecycleOverview(payload);
+    renderLifecycleBanners(payload?.model_lifecycle?.models || []);
+  } catch (error) {
+    const grid = document.getElementById("model-lifecycle-grid");
+    if (grid) grid.innerHTML = `<div class="model-lifecycle-loading">Lifecycle metadata unavailable: ${escapeHtml(error.message)}</div>`;
+  }
+}
 renderCTHourlyHistory();
+loadModelLifecycleOverview();
+// Keep lifecycle ages current in long-lived operator sessions without restarting the platform.
+setInterval(loadModelLifecycleOverview, 60 * 60 * 1000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") loadModelLifecycleOverview();
+});
 loadCTDatabaseHistory();
 loadCoagulationDatabaseHistory();
 loadBromateDatabaseHistory();

@@ -2930,3 +2930,78 @@ body{
   .water-chain-risk{grid-template-columns:auto 1fr;}
   .water-chain-risk-path{grid-column:1/-1;white-space:normal;}
 }
+/* Model lifecycle review: advisory status does not disable predictions. */
+.model-lifecycle-section{
+  margin:0 0 22px;
+  padding:18px;
+  border:1px solid #c9dce5;
+  border-radius:8px;
+  background:#f7fbfc;
+}
+.model-lifecycle-heading{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:14px;
+}
+.model-lifecycle-heading h4{margin:2px 0 0;font-size:1.05rem;color:#0a2646;}
+.model-lifecycle-kicker{font-size:.72rem;font-weight:800;color:#008794;}
+.model-lifecycle-policy{font-size:.78rem;font-weight:700;color:#506878;}
+.model-lifecycle-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+}
+.model-lifecycle-card{
+  min-width:0;
+  padding:12px;
+  border:1px solid;
+  border-left-width:5px;
+  border-radius:6px;
+  background:#fff;
+}
+.model-lifecycle-card-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;}
+.model-lifecycle-card-head strong{font-size:.86rem;color:#182a38;}
+.model-lifecycle-state{font-size:.68rem;font-weight:800;text-align:right;text-transform:uppercase;}
+.model-lifecycle-card dl{margin:10px 0 8px;display:grid;gap:4px;}
+.model-lifecycle-card dl div{display:flex;justify-content:space-between;gap:10px;font-size:.72rem;}
+.model-lifecycle-card dt{color:#627785;}.model-lifecycle-card dd{margin:0;text-align:right;font-weight:700;color:#243946;}
+.model-lifecycle-card p{margin:0;font-size:.72rem;line-height:1.4;color:#334b59;}
+.lifecycle-current{border-color:#8bc9ad;border-left-color:#218c5f;background:#f3fbf6;}
+.lifecycle-current .model-lifecycle-state{color:#167448;}
+.lifecycle-review{border-color:#e5bd73;border-left-color:#dc8a16;background:#fff9ef;}
+.lifecycle-review .model-lifecycle-state{color:#a55e00;}
+.lifecycle-overdue{border-color:#e3a19b;border-left-color:#c83f35;background:#fff5f4;}
+.lifecycle-overdue .model-lifecycle-state{color:#a72d25;}
+.lifecycle-pending{border-color:#bacbd3;border-left-color:#738b98;background:#f7f9fa;}
+.lifecycle-pending .model-lifecycle-state{color:#566d79;}
+.model-lifecycle-note,.model-lifecycle-loading{margin:12px 0 0;font-size:.76rem;color:#526a78;}
+.model-lifecycle-banner-host{margin:0 0 18px;}
+.model-lifecycle-banner{
+  display:grid;
+  grid-template-columns:minmax(220px,1.1fr) minmax(220px,.9fr);
+  gap:8px 20px;
+  padding:13px 15px;
+  border:1px solid;
+  border-left-width:6px;
+  border-radius:6px;
+}
+.model-lifecycle-banner-status{display:flex;align-items:center;gap:10px;min-width:0;}
+.model-lifecycle-banner-status div{display:grid;gap:2px;min-width:0;}
+.model-lifecycle-banner-status strong{font-size:.82rem;text-transform:uppercase;}
+.model-lifecycle-banner-status span{font-size:.75rem;color:#334b59;overflow-wrap:anywhere;}
+.model-lifecycle-dot{width:11px;height:11px;border-radius:50%;background:currentColor;flex:0 0 auto;}
+.model-lifecycle-banner-meta{display:flex;justify-content:flex-end;align-items:center;gap:16px;font-size:.73rem;color:#526a78;text-align:right;}
+.model-lifecycle-banner p{grid-column:1/-1;margin:2px 0 0;font-size:.76rem;line-height:1.4;color:#263e4b;}
+.model-lifecycle-banner small{grid-column:1/-1;font-size:.68rem;color:#607684;}
+.model-lifecycle-banner.lifecycle-current{color:#167448;}
+.model-lifecycle-banner.lifecycle-review{color:#a55e00;}
+.model-lifecycle-banner.lifecycle-overdue{color:#a72d25;}
+.model-lifecycle-banner.lifecycle-pending{color:#566d79;}
+@media(max-width:900px){
+  .model-lifecycle-grid{grid-template-columns:1fr;}
+  .model-lifecycle-heading{align-items:flex-start;flex-direction:column;}
+  .model-lifecycle-banner{grid-template-columns:1fr;}
+  .model-lifecycle-banner-meta{justify-content:flex-start;text-align:left;flex-wrap:wrap;}
+}

@@ -89,11 +89,12 @@ def test_valid_recent_input_returns_four_separate_rl_values():
 @pytest.mark.parametrize(
     ("family", "months"),
     [
+        ("source_turbidity", 6),
         ("rl_coagulation", 6),
         ("coagulation_performance", 6),
-        ("ct", 12),
-        ("bromate", 12),
-        ("coliform_removal", 12),
+        ("ct", 6),
+        ("bromate", 6),
+        ("coliform_removal", 6),
     ],
 )
 def test_model_review_thresholds(family, months):
@@ -105,8 +106,53 @@ def test_model_review_thresholds(family, months):
         today=date(2026, 7, 30),
     )
     assert result["review_threshold_months"] == months
-    assert result["review_status"] == "model review required"
+    assert result["review_status"] == "model review overdue"
+    assert result["lifecycle_level"] == "overdue"
     assert result["retraining"] == "manual, reviewed, and authorised only"
+
+
+@pytest.mark.parametrize(
+    ("last_review_date", "expected_level"),
+    [
+        ("2026-04-01", "current"),
+        ("2025-11-01", "review"),
+        ("2025-01-01", "overdue"),
+    ],
+)
+def test_model_lifecycle_colour_boundaries(last_review_date, expected_level):
+    result = model_lifecycle(
+        family="coagulation_performance",
+        name="test",
+        version="test",
+        last_review_date=last_review_date,
+        today=date(2026, 7, 30),
+    )
+    assert result["lifecycle_level"] == expected_level
+    assert result["prediction_service_available"] is True
+
+
+@pytest.mark.parametrize(
+    ("family", "expected_date", "expected_days", "precision"),
+    [
+        ("source_turbidity", "2026-05-21", 89, "exact"),
+        ("coagulation_performance", "2026-05-18", 92, "approximate"),
+        ("rl_coagulation", "2026-07-28", 21, "approximate"),
+        ("ct", "2026-04-16", 124, "exact"),
+        ("bromate", "2026-07-21", 28, "exact"),
+        ("coliform_removal", "2026-03-30", 141, "exact"),
+    ],
+)
+def test_github_artefact_reference_ages(family, expected_date, expected_days, precision):
+    result = model_lifecycle(
+        family=family, name="test", version="test", today=date(2026, 8, 18)
+    )
+    assert result["artefact_commit_date"] == expected_date
+    assert result["artefact_commit_precision"] == precision
+    assert result["age_reference_type"] == "GitHub artefact commit"
+    assert result["model_age_days"] == expected_days
+    assert result["age_calculated_on"] == "2026-08-18"
+    assert result["lifecycle_level"] == "current"
+    assert result["training_date"] is None
 
 
 def test_rws_failure_preserves_original_api_error_response(monkeypatch):

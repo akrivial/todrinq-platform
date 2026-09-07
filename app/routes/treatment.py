@@ -213,9 +213,25 @@ def unwrap(x):
 # --------------------------------------------------
 @router.get("/overview", summary="Treatment module overview")
 def overview():
+    lifecycle_models = [
+        _lifecycle("source_turbidity", "SoSe #9 inlet-turbidity model", "SoSe-9"),
+        _lifecycle("coagulation_performance", "SoSe #8 coagulation model", "SoSe-8"),
+        _lifecycle("rl_coagulation", "RL #5 dosing-advisory model", "RL-5"),
+        _lifecycle("ct", "SoSe #10 CT model", "SoSe-10"),
+        _lifecycle("bromate", "SoSe #10.1 bromate model", "SoSe-10.1"),
+        _lifecycle("coliform_removal", "SoSe #10.2 coliform-removal model", "SoSe-10.2-holm"),
+    ]
     return {
         "module": MODULE_NAME,
         "submodules": [SOSE_8, RL_5, SOSE_10, SOSE_101, SOSE_102, BACTOSENSE_4],
+        "model_lifecycle": {
+            "policy": (
+                "Age is calculated from confirmed training/review metadata when available, "
+                "otherwise from the latest recorded GitHub artefact commit. Review at six "
+                "months; overdue after twelve months; advisory only."
+            ),
+            "models": lifecycle_models,
+        },
     }
 
 

@@ -232,11 +232,11 @@ def apply_runtime_reliability(
     suspected_outlier = bool(previous and step_change > rule["max_step"])
 
     if maintenance_active:
-        status, included, effective_class = "maintenance", False, "Unavailable"
+        status, included, effective_class = "maintenance", False, "Unknown"
     elif not timestamp_valid or not physically_valid:
-        status, included, effective_class = "invalid", False, "Unavailable"
+        status, included, effective_class = "invalid", False, "Unknown"
     elif stale:
-        status, included, effective_class = "stale", False, "Unavailable"
+        status, included, effective_class = "stale", False, "Unknown"
     else:
         # Database-backed upsert makes the confirmation state durable across
         # AWS container restarts and prevents UI refreshes from counting twice.
@@ -270,8 +270,10 @@ def apply_runtime_reliability(
         response["recommended_action"] = action_from_class(effective_class)
     else:
         response["raw_risk_class"] = raw_class
-        response["overall_risk"] = {"class": "Unavailable", "score": 0}
+        response["overall_risk"] = {"class": "Unknown", "score": 0}
         response["recommended_action"] = "Verify data availability and quality before making a risk-based decision."
+
+    response["risk_state"] = effective_class
 
     response["included_in_risk_aggregation"] = included
     response["reliability"] = {
@@ -301,7 +303,7 @@ def aggregate_active_components(components: list[dict]) -> dict:
         and component.get("overall_risk", {}).get("class") not in {"Unavailable", "Unknown"}
     ]
     if not active:
-        return {"class": "Unavailable", "score": 0}
+        return {"class": "Unknown", "score": 0, "risk_state": "Unknown"}
     return aggregate_risk_classes(active)
 
 
@@ -339,10 +341,10 @@ def overall_from_scores(*scores: int) -> dict:
 def aggregate_risk_classes(classes: list[str]) -> dict:
     normalized = [str(c or "").lower() for c in classes if c]
     if any(c in ("high", "critical") for c in normalized):
-        return {"class": "High", "score": 5}
+        return {"class": "High", "score": 5, "risk_state": "High"}
     if any(c in ("moderate", "medium") for c in normalized):
-        return {"class": "Moderate", "score": 3}
-    return {"class": "Low", "score": 1}
+        return {"class": "Moderate", "score": 3, "risk_state": "Moderate"}
+    return {"class": "Low", "score": 1, "risk_state": "Low"}
 
 
 def action_from_class(risk_class: str) -> str:
@@ -386,6 +388,7 @@ def build_response(
         "severity": severity,
         "consequence": consequence,
         "overall_risk": overall_risk,
+        "risk_state": overall_risk["class"],
         "recommended_action": recommended_action,
         "short_term_actions": short_term_actions or [],
         "long_term_actions": long_term_actions or [],
@@ -1403,6 +1406,7 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
         "low": ("green", "🟢"),
         "moderate": ("amber", "🟡"),
         "high": ("red", "🔴"),
+        "unknown": ("grey", "⚪"),
         "unavailable": ("grey", "⚪"),
     }[level]
 
@@ -1507,11 +1511,11 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
     overall_score_num = max(br_score, ct_score, co_score)
     effective_overall = aggregate_active_components(list(reliability_components.values()))
     overall_label = effective_overall["class"]
-    if overall_label == "Unavailable":
+    if overall_label == "Unknown":
         overall_score_num = 0
 
     # ── Trade-off & operational message logic ─────────────────────────────
-    disinfection_insufficient = ct_level != "low" or co_level != "low"
+    disinfection_insufficient = ct_level in {"moderate", "high"} or co_level in {"moderate", "high"}
     trade_off = br_level == "high" and disinfection_insufficient
 
     if trade_off:
@@ -1682,8 +1686,9 @@ def ozonation_operational_risk(data: OzonationOperationalInput):
         "submodule": "Treatment / Ozonation",
         "assessment_type": "operational",
         "overall_risk": {"class": overall_label, "score": overall_score_num},
+        "risk_state": overall_label,
         "reliability": {
-            "status": "unavailable" if overall_label == "Unavailable" else "active",
+            "status": "unavailable" if overall_label == "Unknown" else "active",
             "components": {key: value["reliability"] for key, value in reliability_components.items()},
         },
         "trade_off_detected": trade_off,
