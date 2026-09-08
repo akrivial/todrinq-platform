@@ -234,8 +234,16 @@ def _login_page(error: str = "") -> HTMLResponse:
     label {{ display:block; font-weight:700; font-size:.86rem; margin-bottom:8px; }}
     input {{
       width:100%; height:46px; border:1px solid #b8d3de; border-radius:8px;
-      padding:0 12px; font:inherit; color:var(--navy);
+      padding:0 48px 0 12px; font:inherit; color:var(--navy);
     }}
+    .password-field {{ position:relative; }}
+    .password-toggle {{
+      position:absolute; top:50%; right:6px; transform:translateY(-50%);
+      width:38px; height:38px; margin:0; padding:0; display:grid; place-items:center;
+      border:0; border-radius:6px; background:transparent; color:#517083;
+      font-size:1.2rem; cursor:pointer;
+    }}
+    .password-toggle:hover {{ background:#edf7fa; color:var(--navy); }}
     button {{
       width:100%; height:46px; margin-top:18px; border:0; border-radius:8px;
       background:linear-gradient(135deg,var(--navy),var(--teal)); color:white;
@@ -251,10 +259,24 @@ def _login_page(error: str = "") -> HTMLResponse:
     {error_html}
     <form method="post" action="/login">
       <label for="password">Platform password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+      <div class="password-field">
+        <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+        <button class="password-toggle" id="password-toggle" type="button" aria-label="Show password" aria-pressed="false" title="Show password">&#128065;</button>
+      </div>
       <button type="submit">Sign in</button>
     </form>
   </main>
+  <script>
+    const passwordInput = document.getElementById("password");
+    const passwordToggle = document.getElementById("password-toggle");
+    passwordToggle.addEventListener("click", () => {{
+      const show = passwordInput.type === "password";
+      passwordInput.type = show ? "text" : "password";
+      passwordToggle.setAttribute("aria-label", show ? "Hide password" : "Show password");
+      passwordToggle.setAttribute("aria-pressed", String(show));
+      passwordToggle.title = show ? "Hide password" : "Show password";
+    }});
+  </script>
 </body>
 </html>""")
 
