@@ -2,10 +2,17 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+from app.coagulation_domain import FECL3_ACTIONS_MG_L, FECL3_MAX_MG_L, FECL3_MIN_MG_L
 from app.routes import coagulation_rl as rl_route
+from app.routes.mock_pims import generate_coagulation_data
 from app.routes import rws_test
-from app.services.coagulation_rl import get_dosage_suggestion
+from app.services.coagulation_rl import (
+    ACTION_MAP,
+    _select_lower_dose_improvement,
+    get_dosage_suggestion,
+)
 from app.services.data_quality import assess_operational_inputs
 from app.services.model_lifecycle import model_lifecycle
 
@@ -84,6 +91,68 @@ def test_valid_recent_input_returns_four_separate_rl_values():
     assert result["recommended_fecl3_concentration"]["value"] is not None
     assert result["predicted_turbidity_current_dose"]["value"] is not None
     assert result["predicted_turbidity_recommended_dose"]["value"] is not None
+
+
+def test_mock_pims_fecl3_stays_inside_validated_rl_domain():
+    for _ in range(1000):
+        dose = generate_coagulation_data()["fecl3_concentration"]
+        assert FECL3_MIN_MG_L <= dose <= FECL3_MAX_MG_L
+
+
+@pytest.mark.parametrize("dose", [1.49, 6.01])
+def test_rl_api_rejects_fecl3_outside_validated_domain(dose):
+    with pytest.raises(ValidationError):
+        rl_route.CoagulationRLInput(fecl3_concentration=dose)
+
+
+@pytest.mark.parametrize("dose", [FECL3_MIN_MG_L, FECL3_MAX_MG_L])
+def test_rl_api_accepts_fecl3_domain_boundaries(dose):
+    body = rl_route.CoagulationRLInput(fecl3_concentration=dose)
+    assert body.fecl3_concentration == dose
+
+
+def test_rl_action_map_matches_shared_validated_domain():
+    assert tuple(ACTION_MAP) == FECL3_ACTIONS_MG_L
+
+
+def test_service_withholds_advice_for_out_of_domain_current_dose():
+    result = get_dosage_suggestion(
+        {**VALID_INPUT, "fecl3_concentration": 6.01},
+        input_timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+    assert result["data_quality"]["status"] == "out_of_domain"
+    assert result["recommendation_available"] is False
+    assert result["recommended_fecl3_concentration"]["value"] is None
+
+
+class _DoseResponseModel:
+    def __init__(self, predictions):
+        self.predictions = predictions
+
+    def predict(self, frame, verbose=0):
+        dose = float(frame.iloc[0]["fecl3_concentration"])
+        return [[self.predictions[dose]]]
+
+
+def test_rl_safety_filter_selects_highest_q_lower_dose_with_lower_turbidity():
+    q_values = [0.1, 0.9, 0.8, 0.2, 0.0, -0.1, -0.2, -0.3]
+    selected = _select_lower_dose_improvement(
+        model_input={**VALID_INPUT, "fecl3_concentration": 2.75},
+        current_prediction=5.99,
+        q_values=q_values,
+        supervised_model=_DoseResponseModel({1.5: 5.70, 2.0: 5.86, 2.5: 6.10}),
+    )
+    assert selected[:3] == (1, 2.0, 5.86)
+
+
+def test_rl_safety_filter_withholds_when_lower_dose_does_not_improve_turbidity():
+    selected = _select_lower_dose_improvement(
+        model_input={**VALID_INPUT, "fecl3_concentration": 2.75},
+        current_prediction=5.99,
+        q_values=[0.1, 0.9, 0.8, 0.2, 0.0, -0.1, -0.2, -0.3],
+        supervised_model=_DoseResponseModel({1.5: 6.20, 2.0: 6.10, 2.5: 6.01}),
+    )
+    assert selected[0] is None
 
 
 @pytest.mark.parametrize(
@@ -245,3 +314,16 @@ def test_ui_has_one_navigation_row_and_four_rl_values():
     assert 'id="rl5-recommended-turbidity-display"' in html
     assert 'id="btn-rl5-accept"' in html
     assert 'id="btn-rl5-reject"' in html
+
+
+def test_coagulation_history_ui_describes_six_hour_forecast_matching():
+    root = Path(__file__).parents[1]
+    html = (root / "app" / "static" / "ui" / "index.html").read_text(encoding="utf-8")
+    javascript = (root / "app" / "static" / "ui" / "app.js").read_text(encoding="utf-8")
+    assert "six completed +6h forecasts" in html.lower()
+    assert "issued six hours before its target time" in html.lower()
+    assert 'id="coagulation-now-time"' in html
+    assert 'id="coagulation-target-time"' in html
+    assert 'id="coagulation-future-prediction"' in html
+    assert 'Number(item.metadata.forecast_horizon_hours) === 6' in javascript
+    assert '"NOW"' in javascript[javascript.index("function renderCoagulationStoredHistory"):javascript.index("async function loadCoagulationDatabaseHistory")]

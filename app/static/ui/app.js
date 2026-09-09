@@ -2336,7 +2336,9 @@ function makeCoagulationHistoryChart(canvasId) {
       const labels = chart.data.labels || [];
       if (!labels.length) return;
       const { ctx, chartArea, scales } = chart;
-      const nowX = scales.x.getPixelForValue(labels.length - 1);
+      const nowIndex = labels.indexOf("NOW");
+      if (nowIndex < 0) return;
+      const nowX = scales.x.getPixelForValue(nowIndex);
       ctx.save();
       ctx.strokeStyle = "#0d1f3c";
       ctx.lineWidth = 2.5;
@@ -2351,6 +2353,26 @@ function makeCoagulationHistoryChart(canvasId) {
       ctx.restore();
     },
   };
+  const forecastHalo = {
+    id: "coagulationForecastHalo",
+    afterDatasetsDraw(chart) {
+      const point = chart.getDatasetMeta(3)?.data?.at(-1);
+      const value = chart.data.datasets[3]?.data?.at(-1);
+      if (!point || value == null) return;
+      const { ctx } = chart;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 13, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(123,75,183,.16)";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 9, 0, Math.PI * 2);
+      ctx.strokeStyle = "#7b4bb7";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
   return new Chart(canvas.getContext("2d"), {
     type: "line",
     data: {
@@ -2359,6 +2381,7 @@ function makeCoagulationHistoryChart(canvasId) {
         { label: "Predicted outlet turbidity", data: [], borderColor: "#ed7d1a", backgroundColor: "rgba(237,125,26,.10)", borderWidth: 3, pointRadius: 5, tension: .25 },
         { label: "Measured outlet turbidity", data: [], borderColor: "#08a9bd", backgroundColor: "#08a9bd", borderWidth: 0, pointRadius: 6, pointStyle: "rectRot", showLine: false },
         { label: "Operator reference (6 FTU)", data: [], borderColor: "#287fb8", borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0 },
+        { label: "Current forecast (+6h target)", data: [], borderColor: "#7b4bb7", backgroundColor: "#ffffff", pointBorderColor: "#7b4bb7", pointBorderWidth: 4, pointRadius: 7, pointHoverRadius: 10, showLine: false },
       ],
     },
     options: {
@@ -2367,11 +2390,11 @@ function makeCoagulationHistoryChart(canvasId) {
       interaction: { mode: "index", intersect: false },
       scales: {
         y: { beginAtZero: true, title: { display: true, text: "Outlet turbidity (NTU / model output)" } },
-        x: { title: { display: true, text: "Previous six hourly samples → NOW" } },
+        x: { title: { display: true, text: "Six completed +6h forecasts · NOW · current +6h target" } },
       },
       plugins: { legend: { position: "top" } },
     },
-    plugins: [nowMarker],
+    plugins: [nowMarker, forecastHalo],
   });
 }
 
@@ -3112,15 +3135,24 @@ function renderCoagulationStoredHistory(entries = []) {
     value: Number(item.value ?? item.prediction),
     kind: item.kind || "prediction",
     source: item.source || "unknown",
+    metadata: item.metadata || {},
   })).filter(item => item.timestamp && Number.isFinite(item.value));
 
-  const predictions = normalized.filter(item => item.kind === "prediction");
-  const current = predictions.at(-1) || null;
-  const currentTime = current ? new Date(current.timestamp).getTime() : Date.now();
-  const predictionByTime = new Map(predictions.map(item => [new Date(item.timestamp).getTime(), item]));
+  const predictions = normalized.filter(item =>
+    item.kind === "prediction" && Number(item.metadata.forecast_horizon_hours) === 6
+  );
+  const nowMs = Date.now();
+  const pendingForecast = predictions
+    .filter(item => new Date(item.metadata.target_at || item.timestamp).getTime() > nowMs)
+    .sort((a, b) => new Date(b.metadata.issued_at) - new Date(a.metadata.issued_at))[0] || null;
+  const predictionByTime = new Map(predictions.map(item => [
+    new Date(item.metadata.target_at || item.timestamp).getTime(), item
+  ]));
   const measurementByTime = new Map();
   normalized
-    .filter(item => item.kind === "measurement" && new Date(item.timestamp).getTime() < currentTime)
+    .filter(item =>
+      item.kind === "measurement" && Number(item.metadata.forecast_horizon_hours) === 6
+    )
     .forEach(item => measurementByTime.set(new Date(item.timestamp).getTime(), item));
   const pairs = Array.from(measurementByTime.values())
     .map(measurement => ({
@@ -3128,22 +3160,42 @@ function renderCoagulationStoredHistory(entries = []) {
       measured: measurement.value,
       predicted: predictionByTime.get(new Date(measurement.timestamp).getTime())?.value ?? null,
       source: measurement.source,
+      issuedAt: predictionByTime.get(new Date(measurement.timestamp).getTime())?.metadata.issued_at,
     }))
     .filter(item => item.predicted != null)
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
     .slice(-6);
 
   const timeLabel = value => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const labels = [...pairs.map(item => timeLabel(item.timestamp)), "NOW"];
-  const predicted = [...pairs.map(item => item.predicted), current?.value ?? null];
-  const measured = [...pairs.map(item => item.measured), null];
+  const futureTarget = pendingForecast?.metadata.target_at || pendingForecast?.timestamp;
+  const labels = [
+    ...pairs.map(item => timeLabel(item.timestamp)),
+    "NOW",
+    ...(pendingForecast ? [`Target ${timeLabel(futureTarget)}`] : []),
+  ];
+  const predicted = [...pairs.map(item => item.predicted), null, ...(pendingForecast ? [null] : [])];
+  const measured = [...pairs.map(item => item.measured), null, ...(pendingForecast ? [null] : [])];
+  const futurePrediction = [
+    ...pairs.map(() => null),
+    null,
+    ...(pendingForecast ? [pendingForecast.value] : []),
+  ];
 
   if (charts?.coagulationHistory) {
     charts.coagulationHistory.data.labels = labels;
     charts.coagulationHistory.data.datasets[0].data = predicted;
     charts.coagulationHistory.data.datasets[1].data = measured;
     charts.coagulationHistory.data.datasets[2].data = labels.map(() => 6);
+    charts.coagulationHistory.data.datasets[3].data = futurePrediction;
     charts.coagulationHistory.update();
   }
+
+  const targetElement = document.getElementById("coagulation-target-time");
+  const predictionElement = document.getElementById("coagulation-future-prediction");
+  if (targetElement) targetElement.textContent = pendingForecast ? timeLabel(futureTarget) : "awaiting forecast";
+  if (predictionElement) predictionElement.textContent = pendingForecast
+    ? `${Number(pendingForecast.value).toFixed(3)} FTU / model output`
+    : "awaiting forecast";
 
   const strip = document.getElementById("coagulation-history-strip");
   if (strip) {
@@ -3152,10 +3204,22 @@ function renderCoagulationStoredHistory(entries = []) {
         <span>${timeLabel(item.timestamp)}</span>
         <strong>Pred ${Number(item.predicted).toFixed(3)}</strong>
         <strong>Measured ${Number(item.measured).toFixed(3)}</strong>
+        <small>Issued ${timeLabel(item.issuedAt)} · +6h</small>
         <em>${item.source.startsWith("mock") ? "MOCK PIMS" : "MEASURED"}</em>
       </div>`).join("") : `<div class="placeholder-box">Awaiting matched outlet-turbidity samples.</div>`;
   }
 }
+
+function updateCoagulationForecastClock() {
+  const element = document.getElementById("coagulation-now-time");
+  if (element) {
+    element.textContent = new Date().toLocaleTimeString([], {
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+  }
+}
+updateCoagulationForecastClock();
+setInterval(updateCoagulationForecastClock, 1000);
 
 async function loadCoagulationDatabaseHistory() {
   try {

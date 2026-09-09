@@ -7,10 +7,11 @@ import io
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 
 from app.services.coagulation_rl import DOSE_UNIT, get_dosage_suggestion
+from app.coagulation_domain import FECL3_MAX_MG_L, FECL3_MIN_MG_L
 from app.services.observation_store import observation_history, record_observation
 from app.routes.mock_pims import generate_coagulation_data
 
@@ -58,7 +59,12 @@ def _persist_advisory(result: dict, *, source: str, timestamp: str) -> dict:
 
 class CoagulationRLInput(BaseModel):
     ftu_raw_water: float | None = None
-    fecl3_concentration: float | None = None
+    fecl3_concentration: float | None = Field(
+        default=None,
+        ge=FECL3_MIN_MG_L,
+        le=FECL3_MAX_MG_L,
+        description="Current FeCl3 dose within the validated RL #5 domain (mg/L).",
+    )
     temperature_raw_water: float | None = None
     ph_raw_water: float | None = None
     after_dredging: float | None = None

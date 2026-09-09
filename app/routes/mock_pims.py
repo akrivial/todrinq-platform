@@ -2,6 +2,8 @@ from fastapi import APIRouter
 from datetime import datetime, timezone
 import random
 
+from app.coagulation_domain import FECL3_MAX_MG_L, FECL3_MIN_MG_L
+
 router = APIRouter()
 
 
@@ -9,7 +11,10 @@ def generate_coagulation_data(observed_at: str | None = None):
     return {
         "timestamp": observed_at or datetime.now(timezone.utc).isoformat(),
         "ftu_raw_water": round(random.uniform(3.0, 12.0), 2),
-        "fecl3_concentration": round(random.uniform(1.0, 8.0), 2),
+        # Keep synthetic inputs inside the validated RL #5 dosing domain.
+        "fecl3_concentration": round(
+            random.uniform(FECL3_MIN_MG_L, FECL3_MAX_MG_L), 2
+        ),
         "temperature_raw_water": round(random.uniform(5.0, 22.0), 2),
         "ph_raw_water": round(random.uniform(6.5, 8.5), 2),
         "after_dredging": random.randint(0, 1),

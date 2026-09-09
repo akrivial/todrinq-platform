@@ -693,18 +693,25 @@
           </div>
 
           <div class="note top-gap">
-            Reliability check: compare actual outlet turbidity from PIMS with the prediction issued earlier for the same timestamp, especially the +6h ahead prediction.
+            Reliability check: compare actual outlet turbidity from PIMS with the +6h prediction issued six hours earlier for that exact measurement timestamp.
             Awaiting real hourly PIMS outlet turbidity for the previous 1-2 days; no values are fabricated.
           </div>
 
           <div class="top-gap">
             <div class="panel-head">
               <div>
-                <h4>Prediction reliability — previous six hours</h4>
-                <p class="muted-hint">Each prediction is matched to the outlet-turbidity measurement with the exact same timestamp. Measurements are supplied by Mock PIMS now and by real PIMS after connection.</p>
+                <h4>Prediction reliability — six completed +6h forecasts</h4>
+                <p class="muted-hint">Each prediction was issued six hours before its target time and is compared with the outlet-turbidity measurement recorded at that exact target time. Measurements are supplied by Mock PIMS now and by real PIMS after connection.</p>
               </div>
             </div>
             <div class="status-row"><span class="badge info" id="coagulation-history-badge">History: stored observations</span></div>
+            <div class="mini-info top-gap" id="coagulation-forecast-clock">
+              <strong>NOW:</strong> <span id="coagulation-now-time">–</span>
+              <span aria-hidden="true"> → </span>
+              <strong>+6h prediction target:</strong> <span id="coagulation-target-time">–</span>
+              <span aria-hidden="true"> · </span>
+              <strong>Predicted turbidity:</strong> <span id="coagulation-future-prediction">awaiting forecast</span>
+            </div>
             <div id="coagulation-history-strip" class="validation-strip"><div class="placeholder-box">Awaiting matched outlet-turbidity samples.</div></div>
             <div class="chart-wrap operator-history-chart"><canvas id="chart-coagulation-history"></canvas></div>
           </div>

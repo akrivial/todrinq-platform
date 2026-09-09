@@ -15,6 +15,11 @@ import numpy as np
 import pandas as pd
 from tensorflow import keras
 
+from app.coagulation_domain import (
+    FECL3_ACTIONS_MG_L,
+    FECL3_MAX_MG_L,
+    FECL3_MIN_MG_L,
+)
 from app.models.coagulation.rl.rl_models_fast import UnifiedCoagulationEnv
 from model.physics_layer import PhysicsLayer, ModifiedBatchNormalization
 from app.services.data_quality import assess_operational_inputs
@@ -32,7 +37,7 @@ RL_MODEL_PATH = (
 )
 SUPERVISED_MODEL_PATH = BASE_DIR / "models" / "coagulation" / "optimal_model_neural_network.keras"
 
-ACTION_MAP = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0]
+ACTION_MAP = list(FECL3_ACTIONS_MG_L)
 DOSE_UNIT = "mg/L"
 REQUIRED_INPUTS = (
     "ftu_raw_water",
@@ -85,6 +90,42 @@ def _extract_model_prediction(prediction):
     return float(arr.reshape(-1)[0])
 
 
+def _select_lower_dose_improvement(
+    *, model_input: dict, current_prediction: float, q_values, supervised_model
+):
+    """Select the highest-Q action that lowers both dose and predicted turbidity.
+
+    This is an advisory safety constraint around the delivered models. It does
+    not alter either model or manufacture an output value. If the models cannot
+    support the required direction, no recommendation is returned.
+    """
+    current_dose = float(model_input["fecl3_concentration"])
+    ranked_indices = np.argsort(np.asarray(q_values).reshape(-1))[::-1]
+    evaluated_actions = []
+    for action_idx in ranked_indices:
+        candidate_dose = float(ACTION_MAP[int(action_idx)])
+        if candidate_dose >= current_dose:
+            continue
+        candidate_input = dict(model_input)
+        candidate_input["fecl3_concentration"] = candidate_dose
+        candidate_prediction = _extract_model_prediction(
+            supervised_model.predict(pd.DataFrame([candidate_input]), verbose=0)
+        )
+        evaluated_actions.append(
+            {
+                "action_index": int(action_idx),
+                "dose": candidate_dose,
+                "predicted_turbidity": candidate_prediction,
+            }
+        )
+        if (
+            candidate_prediction is not None
+            and candidate_prediction < current_prediction
+        ):
+            return int(action_idx), candidate_dose, candidate_prediction, evaluated_actions
+    return None, None, None, evaluated_actions
+
+
 def get_dosage_suggestion(
     online_data_dict: dict,
     *,
@@ -121,6 +162,20 @@ def get_dosage_suggestion(
         name="KWR coagulation-performance model (SoSe #8)",
         version=SUPERVISED_MODEL_PATH.name,
     )
+    current_dose = online_data_dict.get("fecl3_concentration")
+    if current_dose is not None and not (
+        FECL3_MIN_MG_L <= float(current_dose) <= FECL3_MAX_MG_L
+    ):
+        quality = {
+            **quality,
+            "status": "out_of_domain",
+            "valid": False,
+            "message": (
+                f"FeCl3 concentration must be between {FECL3_MIN_MG_L:.1f} "
+                f"and {FECL3_MAX_MG_L:.1f} {DOSE_UNIT} for RL #5."
+            ),
+            "out_of_domain_fields": ["fecl3_concentration"],
+        }
     if not quality["valid"]:
         return {
             "module": "Treatment",
@@ -130,9 +185,10 @@ def get_dosage_suggestion(
             "sensor_type": "reinforcement-learning advisory",
             "advisory_only": True,
             "recommendation_available": False,
-            "message": (
+            "message": quality.get(
+                "message",
                 "Recommendation unavailable because one or more required input "
-                "values are stale or unavailable."
+                "values are stale or unavailable.",
             ),
             "data_quality": quality,
             "current_fecl3_dose": {
@@ -198,19 +254,58 @@ def get_dosage_suggestion(
     state_input = np.array(state, dtype=np.float32).reshape(1, -1)
 
     q_values = dqn_model.predict(state_input, verbose=0)
-    best_action_idx = int(np.argmax(q_values[0]))
-
-    recommended_fecl3_mg_per_l = float(ACTION_MAP[best_action_idx])
-
-    recommended_input = dict(model_input)
-    recommended_input["fecl3_concentration"] = recommended_fecl3_mg_per_l
-    recommended_prediction_raw = supervised_model.predict(
-        pd.DataFrame([recommended_input]),
-        verbose=0,
+    raw_best_action_idx = int(np.argmax(q_values[0]))
+    (
+        best_action_idx,
+        recommended_fecl3_mg_per_l,
+        predicted_recommended_turbidity,
+        evaluated_actions,
+    ) = _select_lower_dose_improvement(
+        model_input=model_input,
+        current_prediction=predicted_current_turbidity,
+        q_values=q_values[0],
+        supervised_model=supervised_model,
     )
-    predicted_recommended_turbidity = _extract_model_prediction(
-        recommended_prediction_raw
-    )
+
+    if best_action_idx is None:
+        return {
+            "module": "Treatment",
+            "process": "Coagulation",
+            "name": "Optimal FeCl3 dosage for coagulation",
+            "sensor_name": "RL #5",
+            "sensor_type": "reinforcement-learning advisory",
+            "advisory_only": True,
+            "recommendation_available": False,
+            "message": (
+                "Recommendation withheld: no lower-dose action produced a lower "
+                "predicted turbidity for the current inputs."
+            ),
+            "data_quality": quality,
+            "validation_status": "requires review",
+            "current_fecl3_dose": {
+                "value": float(model_input["fecl3_concentration"]),
+                "unit": DOSE_UNIT,
+            },
+            "recommended_fecl3_concentration": {"value": None, "unit": DOSE_UNIT},
+            "predicted_turbidity_current_dose": {
+                "value": predicted_current_turbidity,
+                "unit": "FTU / model output",
+            },
+            "predicted_turbidity_recommended_dose": {
+                "value": None,
+                "unit": "FTU / model output",
+            },
+            "model_lifecycle": lifecycle,
+            "coagulation_model_lifecycle": performance_lifecycle,
+            "operator_decision": "pending",
+            "input_data": online_data_dict,
+            "recommendation_safety_check": {
+                "rule": "recommended dose < current dose and predicted turbidity < current prediction",
+                "passed": False,
+                "raw_dqn_action_index": raw_best_action_idx,
+                "evaluated_lower_dose_actions": evaluated_actions,
+            },
+        }
 
     recommended_dosing_flow = None
     if flow_coagulation is not None:
@@ -231,9 +326,17 @@ def get_dosage_suggestion(
         "data_quality": quality,
         "validation_status": "under validation",
         "validation_message": (
-            "RL #5 is advisory support only. Verify ACTION_MAP, dosing-flow unit conversion, "
-            "and model-output interpretation with Greg before final release."
+            "RL #5 is advisory support only. The delivered DQN action is safety-filtered "
+            "to require both a lower dose and lower model-predicted turbidity. Verify "
+            "ACTION_MAP units and dosing-flow conversion with the model owner."
         ),
+        "recommendation_safety_check": {
+            "rule": "recommended dose < current dose and predicted turbidity < current prediction",
+            "passed": True,
+            "raw_dqn_action_index": raw_best_action_idx,
+            "selected_action_index": best_action_idx,
+            "evaluated_lower_dose_actions": evaluated_actions,
+        },
         "kwr_soft_sensor_used": {
             "name": "Estimation of turbidity of the coagulation-flocculation process",
             "sensor_name": "SoSe #8",
