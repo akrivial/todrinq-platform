@@ -10,7 +10,7 @@ from app.routes.mock_pims import generate_coagulation_data
 from app.routes import rws_test
 from app.services.coagulation_rl import (
     ACTION_MAP,
-    _select_lower_dose_improvement,
+    _select_rl_action,
     get_dosage_suggestion,
 )
 from app.services.data_quality import assess_operational_inputs
@@ -134,25 +134,32 @@ class _DoseResponseModel:
         return [[self.predictions[dose]]]
 
 
-def test_rl_safety_filter_selects_highest_q_lower_dose_with_lower_turbidity():
-    q_values = [0.1, 0.9, 0.8, 0.2, 0.0, -0.1, -0.2, -0.3]
-    selected = _select_lower_dose_improvement(
-        model_input={**VALID_INPUT, "fecl3_concentration": 2.75},
-        current_prediction=5.99,
-        q_values=q_values,
-        supervised_model=_DoseResponseModel({1.5: 5.70, 2.0: 5.86, 2.5: 6.10}),
+@pytest.mark.parametrize("current_dose", [1.5, 3.0, 6.0])
+def test_rl_selected_action_allows_increase_maintain_or_decrease(current_dose):
+    original = {**VALID_INPUT, "fecl3_concentration": current_dose}
+    class RecordingModel:
+        def predict(self, frame, verbose=0):
+            assert frame.iloc[0].to_dict() == {**original, "fecl3_concentration": 3.0}
+            return [[6.5]]
+    selected = _select_rl_action(
+        model_input=original,
+        q_values=[0, 0, 0, 1, 0, 0, 0, 0],
+        supervised_model=RecordingModel(),
     )
-    assert selected[:3] == (1, 2.0, 5.86)
+    assert selected[:3] == (3, 3.0, 6.5)
+    assert original["fecl3_concentration"] == current_dose
 
 
-def test_rl_safety_filter_withholds_when_lower_dose_does_not_improve_turbidity():
-    selected = _select_lower_dose_improvement(
-        model_input={**VALID_INPUT, "fecl3_concentration": 2.75},
-        current_prediction=5.99,
-        q_values=[0.1, 0.9, 0.8, 0.2, 0.0, -0.1, -0.2, -0.3],
-        supervised_model=_DoseResponseModel({1.5: 6.20, 2.0: 6.10, 2.5: 6.01}),
-    )
-    assert selected[0] is None
+def test_rl_current_and_recommended_predictions_match_sose8():
+    from app.routes.predict import CoagulationInput, run_coagulation_prediction
+    result = get_dosage_suggestion(VALID_INPUT)
+    assert result["recommendation_available"] is True
+    current = run_coagulation_prediction(CoagulationInput(**VALID_INPUT))
+    recommended_input = {**VALID_INPUT, "fecl3_concentration": result["recommended_fecl3_concentration"]["value"]}
+    recommended = run_coagulation_prediction(CoagulationInput(**recommended_input))
+    assert result["predicted_turbidity_current_dose"]["value"] == pytest.approx(current)
+    assert result["predicted_turbidity_recommended_dose"]["value"] == pytest.approx(recommended)
+    assert result["input_data"] == VALID_INPUT
 
 
 @pytest.mark.parametrize(

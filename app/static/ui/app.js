@@ -2959,34 +2959,13 @@ document.getElementById("btn-treatment-coag-latest")?.addEventListener("click", 
 });
 
 document.getElementById("btn-rl5-latest")?.addEventListener("click", async () => {
-  try {
-    const data = await getJSON(ENDPOINTS.treatmentRLLatest);
-    const summary = applyRL5Result(data);
-
-    const currentDose = extractNumber(data.input_data?.fecl3_concentration);
-
-    if (currentDose !== null) setValue("rl5_current_fecl3_dose", currentDose);
-    const rlInput = data.input_data || {};
-    setValue("rl5_ftu_raw_water", rlInput.ftu_raw_water);
-    setValue("rl5_temperature_raw_water", rlInput.temperature_raw_water);
-    setValue("rl5_ph_raw_water", rlInput.ph_raw_water);
-    setValue("rl5_after_dredging", rlInput.after_dredging);
-    setValue("rl5_lane", rlInput.lane);
-    setValue("rl5_year", rlInput.year);
-
-    const riskPayload = {
-      current_fecl3_dose: summary.currentDose,
-      recommended_fecl3_dose: summary.recommendedDose,
-      output_turbidity: summary.recommendedTurbidity,
-      confidence: 0
-    };
-
-    if (data.recommendation_available !== false) await refreshRL5RiskSafely(riskPayload);
-    await loadRL5HistorySafely();
-
-  } catch (err) {
-    renderStatusCard("rl5-latest", "RL #5 advisory unavailable", { status: "error", message: err.message });
+  if (!state.coagulation.lastInput) {
+    renderStatusCard("rl5-latest", "Run the coagulation prediction first", {
+      message: "The recommendation uses the same process conditions as the outlet-turbidity prediction."
+    });
+    return;
   }
+  await updateRL5FromCoagulationInput(state.coagulation.lastInput);
 });
 
 document.getElementById("btn-bactosense-latest")?.addEventListener("click", async () => {
@@ -3026,7 +3005,7 @@ document.getElementById("btn-risk-overview")?.addEventListener("click", async ()
 // ------------------------------
 document.getElementById("btn-coagulation-demo")?.addEventListener("click", () => {
   setValue("coag_ftu_raw_water", 6.2);
-  setValue("coag_fecl3_concentration", 14.5);
+  setValue("coag_fecl3_concentration", 3.0);
   setValue("coag_temperature_raw_water", 12.0);
   setValue("coag_ph_raw_water", 7.4);
   setValue("coag_after_dredging", 45);
@@ -3275,7 +3254,10 @@ function stopCoagulationLiveMode() {
 
 async function updateRL5FromCoagulationInput(input) {
   try {
-    const data = await postJSON("/treatment/coagulation/rl", input);
+    const data = await postJSON("/treatment/coagulation/rl", {
+      ...input,
+      input_timestamp: state.coagulation.lastTimestamp || new Date().toISOString()
+    });
     const summary = applyRL5Result(data);
 
     const currentDose = summary.currentDose;
@@ -3341,10 +3323,8 @@ document.getElementById("form-coagulation")?.addEventListener("submit", async (e
     );
 
     await runAutomaticCoagulationRisk(payload);
-    await loadCoagulationDatabaseHistory();
-
-    // Same SoSe #8 / PIMS input now automatically feeds RL #5
     await updateRL5FromCoagulationInput(payload);
+    await loadCoagulationDatabaseHistory();
 
   } catch (err) {
     alert("Coagulation request failed: " + err.message);
@@ -3428,10 +3408,8 @@ async function updateLiveCoagulationOnce() {
     );
 
     await runAutomaticCoagulationRisk(input);
-    await loadCoagulationDatabaseHistory();
-
-    // Same demonstration/mock-PIMS input now automatically feeds RL #5
     await updateRL5FromCoagulationInput(input);
+    await loadCoagulationDatabaseHistory();
 
   } catch (err) {
     console.error(err);
@@ -5109,7 +5087,7 @@ loadRwsStationDashboard("nieuwegein_doorslag");
 // // ------------------------------
 // document.getElementById("btn-coagulation-demo")?.addEventListener("click", () => {
 //   setValue("coag_ftu_raw_water", 6.2);
-//   setValue("coag_fecl3_concentration", 14.5);
+//   setValue("coag_fecl3_concentration", 3.0);
 //   setValue("coag_temperature_raw_water", 12.0);
 //   setValue("coag_ph_raw_water", 7.4);
 //   setValue("coag_after_dredging", 45);

@@ -593,7 +593,7 @@
 
             <div class="form-row">
               <label for="coag_fecl3_concentration">FeCl₃ concentration (mg/L)</label>
-              <input id="coag_fecl3_concentration" name="fecl3_concentration" type="number" step="0.01" value="14.5" />
+              <input id="coag_fecl3_concentration" name="fecl3_concentration" type="number" step="0.01" value="3.0" />
             </div>
 
             <div class="form-row">
@@ -738,7 +738,7 @@
           <div class="operator-kicker">OPERATOR ADVISORY · DO NOT APPLY AUTOMATICALLY</div>
           <div class="panel-head">
             <h4>Current FeCl₃ dosing recommendation</h4>
-            <button class="secondary-btn" id="btn-rl5-latest">Refresh from Mock PIMS</button>
+            <button class="secondary-btn" id="btn-rl5-latest">Recalculate for current conditions</button>
           </div>
 
           <div class="rl-decision-grid">
@@ -760,7 +760,7 @@
             Accepting records a decision only; it never sends a dosing command.
           </div>
 
-          <div id="rl5-latest">Press “Load latest backend output” or “Run RL recommendation from mock PIMS”.</div>
+          <div id="rl5-latest">Run the coagulation prediction to automatically calculate an RL recommendation using the same process conditions.</div>
 
           <div class="button-stack top-gap">
             <button type="button" class="primary-btn" id="btn-rl5-accept" disabled>Accept recommendation</button>

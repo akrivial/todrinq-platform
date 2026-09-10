@@ -90,40 +90,24 @@ def _extract_model_prediction(prediction):
     return float(arr.reshape(-1)[0])
 
 
-def _select_lower_dose_improvement(
-    *, model_input: dict, current_prediction: float, q_values, supervised_model
-):
-    """Select the highest-Q action that lowers both dose and predicted turbidity.
-
-    This is an advisory safety constraint around the delivered models. It does
-    not alter either model or manufacture an output value. If the models cannot
-    support the required direction, no recommendation is returned.
-    """
-    current_dose = float(model_input["fecl3_concentration"])
-    ranked_indices = np.argsort(np.asarray(q_values).reshape(-1))[::-1]
-    evaluated_actions = []
-    for action_idx in ranked_indices:
-        candidate_dose = float(ACTION_MAP[int(action_idx)])
-        if candidate_dose >= current_dose:
-            continue
-        candidate_input = dict(model_input)
-        candidate_input["fecl3_concentration"] = candidate_dose
-        candidate_prediction = _extract_model_prediction(
-            supervised_model.predict(pd.DataFrame([candidate_input]), verbose=0)
-        )
-        evaluated_actions.append(
-            {
-                "action_index": int(action_idx),
-                "dose": candidate_dose,
-                "predicted_turbidity": candidate_prediction,
-            }
-        )
-        if (
-            candidate_prediction is not None
-            and candidate_prediction < current_prediction
-        ):
-            return int(action_idx), candidate_dose, candidate_prediction, evaluated_actions
-    return None, None, None, evaluated_actions
+def _select_rl_action(*, model_input: dict, q_values, supervised_model):
+    """Evaluate the DQN-selected dose with all other process conditions unchanged."""
+    values = np.asarray(q_values).reshape(-1)
+    if len(values) != len(ACTION_MAP) or not np.isfinite(values).all():
+        raise ValueError("RL model returned invalid action values.")
+    action_idx = int(np.argmax(values))
+    candidate_dose = float(ACTION_MAP[action_idx])
+    candidate_input = dict(model_input)
+    candidate_input["fecl3_concentration"] = candidate_dose
+    prediction = _extract_model_prediction(
+        supervised_model.predict(pd.DataFrame([candidate_input]), verbose=0)
+    )
+    if prediction is None or not np.isfinite(prediction):
+        raise ValueError("Soft sensor returned an invalid recommended-dose prediction.")
+    return action_idx, candidate_dose, prediction, [{
+        "action_index": action_idx, "dose": candidate_dose,
+        "predicted_turbidity": prediction,
+    }]
 
 
 def get_dosage_suggestion(
@@ -260,52 +244,11 @@ def get_dosage_suggestion(
         recommended_fecl3_mg_per_l,
         predicted_recommended_turbidity,
         evaluated_actions,
-    ) = _select_lower_dose_improvement(
+    ) = _select_rl_action(
         model_input=model_input,
-        current_prediction=predicted_current_turbidity,
         q_values=q_values[0],
         supervised_model=supervised_model,
     )
-
-    if best_action_idx is None:
-        return {
-            "module": "Treatment",
-            "process": "Coagulation",
-            "name": "Optimal FeCl3 dosage for coagulation",
-            "sensor_name": "RL #5",
-            "sensor_type": "reinforcement-learning advisory",
-            "advisory_only": True,
-            "recommendation_available": False,
-            "message": (
-                "Recommendation withheld: no lower-dose action produced a lower "
-                "predicted turbidity for the current inputs."
-            ),
-            "data_quality": quality,
-            "validation_status": "requires review",
-            "current_fecl3_dose": {
-                "value": float(model_input["fecl3_concentration"]),
-                "unit": DOSE_UNIT,
-            },
-            "recommended_fecl3_concentration": {"value": None, "unit": DOSE_UNIT},
-            "predicted_turbidity_current_dose": {
-                "value": predicted_current_turbidity,
-                "unit": "FTU / model output",
-            },
-            "predicted_turbidity_recommended_dose": {
-                "value": None,
-                "unit": "FTU / model output",
-            },
-            "model_lifecycle": lifecycle,
-            "coagulation_model_lifecycle": performance_lifecycle,
-            "operator_decision": "pending",
-            "input_data": online_data_dict,
-            "recommendation_safety_check": {
-                "rule": "recommended dose < current dose and predicted turbidity < current prediction",
-                "passed": False,
-                "raw_dqn_action_index": raw_best_action_idx,
-                "evaluated_lower_dose_actions": evaluated_actions,
-            },
-        }
 
     recommended_dosing_flow = None
     if flow_coagulation is not None:
@@ -326,16 +269,16 @@ def get_dosage_suggestion(
         "data_quality": quality,
         "validation_status": "under validation",
         "validation_message": (
-            "RL #5 is advisory support only. The delivered DQN action is safety-filtered "
-            "to require both a lower dose and lower model-predicted turbidity. Verify "
+            "RL #5 is advisory support only. The DQN-selected dose is evaluated with "
+            "the same process conditions as the current-dose soft-sensor prediction. Verify "
             "ACTION_MAP units and dosing-flow conversion with the model owner."
         ),
         "recommendation_safety_check": {
-            "rule": "recommended dose < current dose and predicted turbidity < current prediction",
+            "rule": "DQN-selected dose evaluated with unchanged non-dose process inputs",
             "passed": True,
             "raw_dqn_action_index": raw_best_action_idx,
             "selected_action_index": best_action_idx,
-            "evaluated_lower_dose_actions": evaluated_actions,
+            "evaluated_actions": evaluated_actions,
         },
         "kwr_soft_sensor_used": {
             "name": "Estimation of turbidity of the coagulation-flocculation process",
