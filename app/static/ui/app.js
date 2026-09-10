@@ -299,6 +299,19 @@ function applyRL5Result(data) {
   setText("rl5-recommended-dose-unit", doseUnit, 0);
   setText("rl5-data-quality-display", qualityStatus, 0);
 
+  const boundaryEl = document.getElementById("rl5-boundary-assessment");
+  if (boundaryEl) {
+    const assessment = data.turbidity_boundary_assessment;
+    if (!recommendationAvailable || !assessment) {
+      boundaryEl.className = "info-box";
+      boundaryEl.textContent = "Turbidity boundary assessment unavailable until a recommendation is returned.";
+    } else {
+      boundaryEl.className = assessment.meets_boundary ? "info-box" : "warning-box";
+      boundaryEl.innerHTML = `<strong>${assessment.meets_boundary ? "Prediction below provisional boundary" : "Turbidity boundary not met — operator review required"}</strong><br>
+        ${escapeHtml(assessment.message)}<br><small>${escapeHtml(assessment.validation_note)}</small>`;
+    }
+  }
+
   state.rl5.currentRecommendationId = data.persistence?.id ?? null;
   const available = recommendationAvailable && state.rl5.currentRecommendationId !== null;
   const accept = document.getElementById("btn-rl5-accept");

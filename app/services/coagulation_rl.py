@@ -39,6 +39,32 @@ SUPERVISED_MODEL_PATH = BASE_DIR / "models" / "coagulation" / "optimal_model_neu
 
 ACTION_MAP = list(FECL3_ACTIONS_MG_L)
 DOSE_UNIT = "mg/L"
+PROVISIONAL_TURBIDITY_BOUNDARY = 6.0
+
+
+def assess_recommended_turbidity(prediction: float) -> dict:
+    """Warning only: never changes the trained policy or its selected action."""
+    meets = prediction < PROVISIONAL_TURBIDITY_BOUNDARY
+    return {
+        "status": "below_boundary" if meets else "boundary_not_met",
+        "predicted_value": prediction,
+        "boundary": PROVISIONAL_TURBIDITY_BOUNDARY,
+        "comparison": "below",
+        "unit": "FTU / model output",
+        "provisional": True,
+        "meets_boundary": meets,
+        "warning_only": True,
+        "message": (
+            f"Predicted turbidity {prediction:.3f} is below the provisional boundary of 6. "
+            "This is a model prediction, not a measured outcome."
+            if meets else
+            f"Predicted turbidity {prediction:.3f} does not meet the provisional boundary (below 6). "
+            "Operator review required. The RL-selected dose is unchanged."
+        ),
+        "validation_note": "Confirm the boundary, FTU/NTU units and treatment of equality with Waternet.",
+    }
+
+
 REQUIRED_INPUTS = (
     "ftu_raw_water",
     "fecl3_concentration",
@@ -266,6 +292,7 @@ def get_dosage_suggestion(
         "included_in_risk_aggregation": False,
         "advisory_only": True,
         "recommendation_available": True,
+        "turbidity_boundary_assessment": assess_recommended_turbidity(predicted_recommended_turbidity),
         "data_quality": quality,
         "validation_status": "under validation",
         "validation_message": (
@@ -336,9 +363,10 @@ def get_dosage_suggestion(
                 "qualifier": "approximately",
             },
             "acceptable_operational_threshold": {
-                "value": 6.0,
+                "value": PROVISIONAL_TURBIDITY_BOUNDARY,
                 "unit": "FTU",
                 "comparison": "below",
+                "provisional": True,
             },
         },
         "operator_decision": "pending",

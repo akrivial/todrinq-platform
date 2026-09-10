@@ -10,6 +10,7 @@ from app.routes.mock_pims import generate_coagulation_data
 from app.routes import rws_test
 from app.services.coagulation_rl import (
     ACTION_MAP,
+    assess_recommended_turbidity,
     _select_rl_action,
     get_dosage_suggestion,
 )
@@ -160,6 +161,21 @@ def test_rl_current_and_recommended_predictions_match_sose8():
     assert result["predicted_turbidity_current_dose"]["value"] == pytest.approx(current)
     assert result["predicted_turbidity_recommended_dose"]["value"] == pytest.approx(recommended)
     assert result["input_data"] == VALID_INPUT
+    assert result["selected_action_index"] == result["recommendation_safety_check"]["raw_dqn_action_index"]
+    assessment = result["turbidity_boundary_assessment"]
+    assert assessment["predicted_value"] == result["predicted_turbidity_recommended_dose"]["value"]
+    assert assessment["warning_only"] is True
+
+
+@pytest.mark.parametrize("prediction,meets", [(5.999, True), (6.0, False), (6.536, False)])
+def test_provisional_turbidity_boundary_warning(prediction, meets):
+    result = assess_recommended_turbidity(prediction)
+    assert result["meets_boundary"] is meets
+    assert result["status"] == ("below_boundary" if meets else "boundary_not_met")
+    assert result["provisional"] is True
+    assert result["warning_only"] is True
+    if not meets:
+        assert "Operator review required" in result["message"]
 
 
 @pytest.mark.parametrize(
