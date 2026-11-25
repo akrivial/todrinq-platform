@@ -1,8 +1,8 @@
 ToDrinQ drinking-water decision-support platform
 Copyright (c) 2026 Akrivi Alexandraki, Delft University of Technology
 
-The MIT licence in LICENSE licence covers the platform code written by Akrivi Alexandraki.
+The MIT licence in LICENSE covers the platform code written by Akrivi Alexandraki.
 The trained soft-sensor model files in app/models/ and the code in model/ are the
 work of their respective developers within the ToDrinQ project. They are included
-with permission and are not covered by this licence.
+with permission and are not covered by the MIT licence.
 
