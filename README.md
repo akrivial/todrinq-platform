@@ -149,7 +149,9 @@ storage, data exchange and user interface.
 
 ## Licence and citation
 
-Released under the [MIT Licence](LICENSE). To cite the software, use
+The platform code is released under the [MIT Licence](LICENSE). The trained
+soft-sensor model files in `app/models/` and the code in `model/` remain the work of
+their developers; they are included with permission and are not covered by the MIT Licence. To cite the software, use
 [`CITATION.cff`](CITATION.cff) or the DOI of the archived release on Zenodo.
 
 ## Status and scientific scope
