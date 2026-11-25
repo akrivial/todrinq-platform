@@ -122,11 +122,35 @@ Runtime databases, virtual environments and credentials are intentionally exclud
 
 ## Author
 
-**Akrivi Alexandraki**
+**Akrivi Alexandraki** is the sole author and developer of this platform.
 
 Engineering Doctorate Candidate, Delft University of Technology
 
 Faculty of Civil Engineering and Geosciences, Sanitary Engineering
+
+## Code review and maintenance
+
+The `main` branch is protected. Every change is made through a pull request and
+must be approved by one of the code owners listed in
+[`.github/CODEOWNERS`](.github/CODEOWNERS):
+
+- Akrivi Alexandraki ([@akrivial](https://github.com/akrivial))
+- Grigorios Kyritsakas ([@GregKyri](https://github.com/GregKyri))
+
+Code review does not imply authorship of the platform.
+
+## Integrated soft sensors
+
+The soft sensors that the platform runs were developed by their respective
+developers within the ToDrinQ project and are integrated here without changes to
+their models. Their authorship remains with their developers. This repository
+contains the platform around them: the backend, data-source adapters, risk layer,
+storage, data exchange and user interface.
+
+## Licence and citation
+
+Released under the [MIT Licence](LICENSE). To cite the software, use
+[`CITATION.cff`](CITATION.cff) or the DOI of the archived release on Zenodo.
 
 ## Status and scientific scope
 

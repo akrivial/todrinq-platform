@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "ToDrinQ drinking-water decision-support platform (backend)"
+authors:
+  - family-names: Alexandraki
+    given-names: Akrivi
+    affiliation: Delft University of Technology
+license: MIT
+repository-code: "https://github.com/akrivial/todrinq-platform"
+abstract: >-
+  Backend that runs independently developed soft sensors for drinking-water
+  treatment behind one validated interface, with data-source adapters,
+  NGSI-LD (FIWARE) data exchange, a risk layer and an observation store.
+  Developed within the ToDrinQ EU Horizon project (Grant Agreement No. 101082035).
+keywords:
+  - drinking-water treatment
+  - soft sensors
+  - decision support
+  - FIWARE
+  - NGSI-LD

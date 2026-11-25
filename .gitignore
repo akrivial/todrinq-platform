@@ -19,3 +19,21 @@ visualizations/
 .DS_Store
 .vscode/
 .idea/
+
+# Local-only material: never published
+# (AI-assistant files, paper / manuscript material, local logs and caches)
+CLAUDE.md
+AGENTS.md
+.claude/
+.agents/
+.cursor/
+.codex/
+_LOCAL_ONLY*/
+paper/
+manuscript/
+*.pptx
+*.pdf
+*.tar
+env-check.txt
+mlruns/
+pytest-cache-files-*/
